@@ -1,0 +1,14 @@
+# Replace these placeholders before deploying.
+name = "your-webdav-worker"
+main = "src/worker.js"
+compatibility_date = "2026-08-21"
+workers_dev = true
+
+# Create this R2 Standard bucket first, then update this value to its exact name.
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "your-webdav-bucket"
+
+# Do not put credentials in this file. Set the following Worker Secrets instead:
+#   WEBDAV_USERNAME
+#   WEBDAV_PASSWORD
