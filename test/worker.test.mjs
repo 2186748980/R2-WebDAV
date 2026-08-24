@@ -102,7 +102,7 @@ async function expectStatus(response, expected, label) {
 
 async function run() {
   let response = await dav("OPTIONS", "/");
-  await expectStatus(response, 204, "OPTIONS");
+  await expectStatus(response, 200, "OPTIONS");
   if (!response.headers.get("DAV")?.includes("1")) throw new Error("OPTIONS did not advertise DAV level 1");
 
   response = await dav("PROPFIND", "/", { authenticated: false, headers: { Depth: "0" } });

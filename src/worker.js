@@ -42,7 +42,9 @@ export default {
       let response;
       switch (request.method.toUpperCase()) {
         case "OPTIONS":
-          response = new Response(null, { status: 204, headers: DAV_HEADERS });
+          // Return 200 rather than an empty 204 for broad Android/WebDAV client
+          // compatibility. Capability headers remain identical.
+          response = new Response(null, { status: 200, headers: DAV_HEADERS });
           break;
         case "PROPFIND":
           response = await handlePropfind(request, env.R2_BUCKET, key);
