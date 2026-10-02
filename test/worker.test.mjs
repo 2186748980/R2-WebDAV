@@ -125,6 +125,39 @@ async function run() {
     throw new Error("panel config API returned unexpected connection details");
   }
 
+  response = await dav("GET", "/panel/api/list?path=");
+  await expectStatus(response, 200, "panel root listing");
+  const rootListing = await response.json();
+  if (!Array.isArray(rootListing.items)) throw new Error("panel list API returned invalid items");
+
+  response = await dav("POST", "/panel/api/action", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "mkdir", path: "panel-test" }),
+  });
+  await expectStatus(response, 201, "panel create directory");
+
+  response = await dav("PUT", "/panel/api/upload?path=panel-test/hello.txt", {
+    headers: { "Content-Type": "text/plain" },
+    body: "hello panel",
+  });
+  await expectStatus(response, 201, "panel upload");
+
+  response = await dav("GET", "/panel/api/file?path=panel-test/hello.txt");
+  await expectStatus(response, 200, "panel preview/download");
+  if ((await response.text()) !== "hello panel") throw new Error("panel file API returned unexpected content");
+
+  response = await dav("POST", "/panel/api/action", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "rename", source: "panel-test/hello.txt", destination: "panel-test/renamed.txt" }),
+  });
+  await expectStatus(response, 200, "panel rename");
+
+  response = await dav("POST", "/panel/api/action", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "delete", source: "panel-test", destination: "panel-test" }),
+  });
+  await expectStatus(response, 200, "panel recursive delete");
+
   response = await dav("OPTIONS", "/");
   await expectStatus(response, 200, "OPTIONS");
   if (!response.headers.get("DAV")?.includes("1")) throw new Error("OPTIONS did not advertise DAV level 1");
