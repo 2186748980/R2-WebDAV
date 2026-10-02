@@ -1,76 +1,86 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="color-scheme" content="dark light">
-  <title>R2-WebDAV</title>
-  <link rel="stylesheet" href="/panel/style.css">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light"><title>R2-WebDAV · Private Cloud</title>
+<link rel="stylesheet" href="/panel/style.css">
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">R2</span><div><strong>R2-WebDAV</strong><small>Private Cloud</small></div></div>
-      <nav>
-        <a class="nav-item active" href="/panel/">概览</a>
-        <a class="nav-item" href="/panel/">文件</a>
-        <a class="nav-item" href="/panel/">上传</a>
-        <a class="nav-item" href="/panel/">WebDAV</a>
-        <a class="nav-item" href="/panel/">设置</a>
-      </nav>
-      <div class="sidebar-foot">Cloudflare Worker + R2</div>
-    </aside>
+<div class="app">
+<aside class="sidebar">
+  <div class="brand"><span class="brand-mark">R2</span><div><strong>R2-WebDAV</strong><small>Private Cloud</small></div></div>
+  <nav>
+    <a href="#overview" data-nav="overview" class="nav-item active">概览</a>
+    <a href="#files" data-nav="files" class="nav-item">文件</a>
+    <a href="#upload" data-nav="upload" class="nav-item">上传</a>
+    <a href="#webdav" data-nav="webdav" class="nav-item">WebDAV</a>
+    <a href="#settings" data-nav="settings" class="nav-item">设置</a>
+  </nav>
+  <div class="sidebar-foot">Cloudflare Worker + R2</div>
+</aside>
+<main class="main">
+<header class="topbar"><div><span class="eyebrow">PRIVATE CLOUD</span><h1 id="pageTitle">概览</h1></div><button class="icon-btn" id="refresh" title="刷新">↻</button></header>
 
-    <main class="main">
-      <header class="topbar">
-        <div><span class="eyebrow">PRIVATE CLOUD</span><h1>概览</h1></div>
-        <button class="icon-btn" id="refresh" title="刷新">↻</button>
-      </header>
+<section id="view-overview" class="view">
+  <section class="hero card">
+    <div class="status-line"><span class="dot"></span><span>服务正常</span></div>
+    <div class="server-label">服务器地址</div>
+    <div class="server-row"><code id="serverUrl">加载中…</code><button class="copy-btn" data-copy="serverUrl">复制</button></div>
+    <div class="quick-actions"><button class="primary" data-goto="files">文件管理</button><button data-goto="webdav">WebDAV 配置</button></div>
+  </section>
+  <section class="grid">
+    <article class="card"><div class="card-title"><span>WebDAV</span><span class="badge ok">已启用</span></div>
+      <div class="kv"><span>用户名</span><code id="username">—</code><button class="copy-mini" data-copy="username">复制</button></div>
+      <div class="kv"><span>密码</span><code>••••••••</code><span class="secret-note">已配置</span></div>
+    </article>
+    <article class="card"><div class="card-title"><span>存储</span><span class="badge ok">已连接</span></div>
+      <div class="stats"><div><strong id="fileCount">—</strong><small>当前根目录文件</small></div><div><strong id="folderCount">—</strong><small>当前根目录文件夹</small></div></div>
+    </article>
+  </section>
+  <section class="card"><div class="section-head"><div><span class="eyebrow">SYSTEM</span><h2>服务器信息</h2></div></div>
+    <div class="info-grid"><div><span>HTTPS</span><strong>正常</strong></div><div><span>Worker</span><strong>运行中</strong></div><div><span>R2</span><strong>已连接</strong></div><div><span>WebDAV</span><strong>DAV Level 1</strong></div></div>
+  </section>
+</section>
 
-      <section class="hero card">
-        <div class="status-line"><span class="dot"></span><span>服务正常</span></div>
-        <div class="server-label">服务器地址</div>
-        <div class="server-row"><code id="serverUrl">加载中…</code><button class="copy-btn" data-copy="serverUrl">复制</button></div>
-        <div class="quick-actions">
-          <button class="primary" id="openFiles">文件管理</button>
-          <button id="openDav">WebDAV 配置</button>
-        </div>
-      </section>
+<section id="view-files" class="view hidden">
+  <section class="card file-toolbar">
+    <div class="toolbar-row"><button id="upBtn">← 上一级</button><div id="breadcrumb" class="breadcrumb"></div></div>
+    <div class="toolbar-row actions"><label class="search"><span>⌕</span><input id="search" placeholder="搜索当前目录"></label><button id="newFolder">新建文件夹</button><button class="primary" id="uploadBtn">上传文件</button></div>
+  </section>
+  <section class="card">
+    <div class="file-head"><span id="pathLabel">根目录</span><span id="fileSummary">—</span></div>
+    <div id="fileList" class="file-list"></div>
+    <div id="empty" class="empty hidden">这个目录还没有文件</div>
+    <button id="loadMore" class="load-more hidden">加载更多</button>
+  </section>
+</section>
 
-      <section class="grid">
-        <article class="card">
-          <div class="card-title"><span>WebDAV</span><span class="badge ok">已启用</span></div>
-          <div class="kv"><span>用户名</span><code id="username">—</code><button class="copy-mini" data-copy="username">复制</button></div>
-          <div class="kv"><span>密码</span><code id="password">••••••••</code><span class="secret-note">已配置</span></div>
-        </article>
-        <article class="card">
-          <div class="card-title"><span>存储</span><span class="badge ok">已连接</span></div>
-          <div class="stats"><div><strong id="fileCount">—</strong><small>当前根目录文件</small></div><div><strong id="folderCount">—</strong><small>当前根目录文件夹</small></div></div>
-        </article>
-      </section>
+<section id="view-upload" class="view hidden">
+  <section class="card upload-card">
+    <div class="section-head"><div><span class="eyebrow">UPLOAD</span><h2>上传文件</h2><p class="muted">上传到当前文件目录，也可以先进入目标文件夹再上传。</p></div></div>
+    <label class="dropzone" id="dropzone"><input type="file" id="fileInput" multiple><strong>选择文件或拖到这里</strong><span>支持多文件；单文件走 Worker 流式上传</span></label>
+    <div id="uploadQueue" class="upload-queue"></div>
+  </section>
+</section>
 
-      <section class="card">
-        <div class="section-head"><div><span class="eyebrow">CONNECTION</span><h2>连接配置</h2></div><button id="copyConfig">复制完整配置</button></div>
-        <div class="config-box">
-          <div><span>WebDAV 地址</span><code id="davUrl">—</code></div>
-          <div><span>面板地址</span><code id="panelUrl">—</code></div>
-          <div><span>用户名</span><code id="username2">—</code></div>
-          <div><span>密码</span><code id="password2">••••••••</code></div>
-        </div>
-      </section>
+<section id="view-webdav" class="view hidden">
+  <section class="card"><div class="section-head"><div><span class="eyebrow">WEBDAV</span><h2>连接配置</h2></div><button id="copyConfig">复制配置</button></div>
+    <div class="config-box"><div><span>WebDAV 地址</span><code id="davUrl">—</code><button class="copy-mini" data-copy="davUrl">复制</button></div><div><span>面板地址</span><code id="panelUrl">—</code><button class="copy-mini" data-copy="panelUrl">复制</button></div><div><span>用户名</span><code id="username2">—</code><button class="copy-mini" data-copy="username2">复制</button></div><div><span>密码</span><code>••••••••</code><span class="secret-note">Worker Secret</span></div></div>
+    <div class="notice">密码不会从 Worker 返回到网页。需要修改密码时，请在 Cloudflare Worker Secrets 中修改 <code>WEBDAV_PASSWORD</code>。</div>
+  </section>
+  <section class="card"><h2>客户端说明</h2><div class="help-grid"><div><strong>OpenList</strong><span>类型选择 WebDAV，地址填写上方 WebDAV 地址。</span></div><div><strong>Android WebDAV</strong><span>使用相同地址、用户名和密码即可。</span></div></div></section>
+</section>
 
-      <section class="card">
-        <div class="section-head"><div><span class="eyebrow">SYSTEM</span><h2>服务器信息</h2></div></div>
-        <div class="info-grid">
-          <div><span>HTTPS</span><strong>正常</strong></div>
-          <div><span>Worker</span><strong>运行中</strong></div>
-          <div><span>R2</span><strong>已连接</strong></div>
-          <div><span>WebDAV</span><strong>DAV Level 1</strong></div>
-        </div>
-      </section>
-    </main>
-  </div>
-  <div class="toast" id="toast"></div>
-  <script src="/panel/app.js" type="module"></script>
-</body>
-</html>
+<section id="view-settings" class="view hidden">
+  <section class="card"><div class="section-head"><div><span class="eyebrow">SETTINGS</span><h2>服务设置</h2></div></div>
+    <div class="settings-list"><div><span>Worker 地址</span><code id="settingsUrl">—</code></div><div><span>认证方式</span><strong>HTTP Basic Auth</strong></div><div><span>存储</span><strong>Cloudflare R2</strong></div><div><span>传输</span><strong>HTTPS only</strong></div></div>
+  </section>
+  <section class="card"><h2>安全说明</h2><p class="muted">面板与 WebDAV 共用现有 Basic Auth。密码只保存在 Worker Secret 中，不写入仓库，也不会由面板 API 返回。</p></section>
+</section>
+</main>
+</div>
+<div id="context" class="context hidden"></div>
+<div class="modal hidden" id="modal"><div class="modal-box"><div class="modal-head"><h3 id="modalTitle"></h3><button id="modalClose">×</button></div><div id="modalBody"></div></div></div>
+<div class="toast" id="toast"></div>
+<script src="/panel/app.js" type="module"></script>
+</body></html>
