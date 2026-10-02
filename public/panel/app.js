@@ -7,7 +7,7 @@ function value(id){return document.getElementById(id).textContent}
 async function copyText(v){await navigator.clipboard.writeText(v);toast("已复制")}
 document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if(b)copyText(value(b.dataset.copy));});
 $("#revealPassword").addEventListener("click",()=>{if($("#password").textContent==="••••••••")reveal();else{$("#password").textContent="••••••••";$("#password2").textContent="••••••••";$("#revealPassword").textContent="显示"}});
-$("#copyConfig").addEventListener("click",()=>{if(!config)return;copyText("WebDAV 地址："+config.serverUrl+"\n用户名："+config.username+"\n密码："+config.password)});
+$("#copyConfig").addEventListener("click",()=>{if(!config)return;copyText("WebDAV 地址："+config.serverUrl+"\n用户名："+config.username+"\n密码：请使用当前 WebDAV/Worker Secret 配置")});
 $("#refresh").addEventListener("click",load);
 $("#openFiles").addEventListener("click",()=>toast("文件管理将在下一阶段接入"));
 $("#openDav").addEventListener("click",()=>document.querySelector(".card:nth-of-type(3)")?.scrollIntoView({behavior:"smooth"}));
