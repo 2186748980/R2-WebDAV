@@ -21,7 +21,7 @@ function setView(name){
 }
 async function loadFiles(path="",reset=true){
   try{
-    if(reset){allItems=[];nextCursor=null}
+    if(reset){allItems=[];nextCursor=null;selected.clear()}
     const q=new URLSearchParams({path,limit:"200"});if(nextCursor)q.set("cursor",nextCursor);
     const data=await apiJson(baseUrl("list")+"?"+q);
     currentPath=data.path;nextCursor=data.truncated?data.cursor:null;
@@ -35,7 +35,7 @@ function renderFiles(data){
   const root=document.createElement("button");root.textContent="根目录";root.onclick=()=>loadFiles("",true);bc.append(root);
   let built="";
   currentPath.split("/").filter(Boolean).forEach((part,i)=>{built+= (built?"/":"")+part;const b=document.createElement("button");b.textContent=" / "+part;b.onclick=()=>loadFiles(built,true);bc.append(b)});
-  const list=$("#fileList");list.innerHTML="";selected.clear();updateBatchBar();
+  const list=$("#fileList");list.innerHTML="";updateBatchBar();
   const shown=allItems.filter(x=>x.name.toLowerCase().includes(filterText.toLowerCase()));
   $("#empty").classList.toggle("hidden",shown.length>0);
   shown.forEach(item=>{
