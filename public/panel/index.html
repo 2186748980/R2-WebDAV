@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>R2-WebDAV</title>
+  <link rel="stylesheet" href="/panel/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">R2</span><div><strong>R2-WebDAV</strong><small>Private Cloud</small></div></div>
+      <nav>
+        <a class="nav-item active" href="/panel/">概览</a>
+        <a class="nav-item" href="/panel/">文件</a>
+        <a class="nav-item" href="/panel/">上传</a>
+        <a class="nav-item" href="/panel/">WebDAV</a>
+        <a class="nav-item" href="/panel/">设置</a>
+      </nav>
+      <div class="sidebar-foot">Cloudflare Worker + R2</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><span class="eyebrow">PRIVATE CLOUD</span><h1>概览</h1></div>
+        <button class="icon-btn" id="refresh" title="刷新">↻</button>
+      </header>
+
+      <section class="hero card">
+        <div class="status-line"><span class="dot"></span><span>服务正常</span></div>
+        <div class="server-label">服务器地址</div>
+        <div class="server-row"><code id="serverUrl">加载中…</code><button class="copy-btn" data-copy="serverUrl">复制</button></div>
+        <div class="quick-actions">
+          <button class="primary" id="openFiles">文件管理</button>
+          <button id="openDav">WebDAV 配置</button>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <div class="card-title"><span>WebDAV</span><span class="badge ok">已启用</span></div>
+          <div class="kv"><span>用户名</span><code id="username">—</code><button class="copy-mini" data-copy="username">复制</button></div>
+          <div class="kv"><span>密码</span><code id="password">••••••••</code><button class="copy-mini" id="revealPassword">显示</button></div>
+        </article>
+        <article class="card">
+          <div class="card-title"><span>存储</span><span class="badge ok">已连接</span></div>
+          <div class="stats"><div><strong id="fileCount">—</strong><small>当前根目录文件</small></div><div><strong id="folderCount">—</strong><small>当前根目录文件夹</small></div></div>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="section-head"><div><span class="eyebrow">CONNECTION</span><h2>连接配置</h2></div><button id="copyConfig">复制完整配置</button></div>
+        <div class="config-box">
+          <div><span>WebDAV 地址</span><code id="davUrl">—</code></div>
+          <div><span>面板地址</span><code id="panelUrl">—</code></div>
+          <div><span>用户名</span><code id="username2">—</code></div>
+          <div><span>密码</span><code id="password2">••••••••</code></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head"><div><span class="eyebrow">SYSTEM</span><h2>服务器信息</h2></div></div>
+        <div class="info-grid">
+          <div><span>HTTPS</span><strong>正常</strong></div>
+          <div><span>Worker</span><strong>运行中</strong></div>
+          <div><span>R2</span><strong>已连接</strong></div>
+          <div><span>WebDAV</span><strong>DAV Level 1</strong></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/panel/app.js" type="module"></script>
+</body>
+</html>
