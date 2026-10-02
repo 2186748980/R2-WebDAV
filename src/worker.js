@@ -31,6 +31,17 @@ export default {
       }));
     }
 
+    if (url.pathname === "/panel") {
+      return finalize(Response.redirect(new URL("/panel/", request.url), 308));
+    }
+    if (url.pathname.startsWith("/panel/api/")) {
+      return finalize(await handlePanelApi(request, env));
+    }
+    if (url.pathname.startsWith("/panel/")) {
+      if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
+      return finalize(await env.ASSETS.fetch(request));
+    }
+
     let key;
     try {
       key = pathToKey(url.pathname);
@@ -82,6 +93,40 @@ export default {
     }
   },
 };
+
+async function handlePanelApi(request, env) {
+  const url = new URL(request.url);
+  if (request.method !== "GET") return textResponse("Method not allowed.", 405);
+
+  if (url.pathname === "/panel/api/config") {
+    let files = 0;
+    let folders = 0;
+    let truncated = false;
+    try {
+      const page = await env.R2_BUCKET.list({ delimiter: "/", limit: 1000 });
+      files = page.objects.length;
+      folders = page.delimitedPrefixes.length;
+      truncated = Boolean(page.truncated);
+    } catch (error) {
+      console.error("Panel config stats failed", { message: String(error?.message || error) });
+    }
+    return jsonResponse({
+      serverUrl: new URL("/", request.url).toString(),
+      panelUrl: new URL("/panel/", request.url).toString(),
+      username: env.WEBDAV_USERNAME,
+      stats: { files, folders, truncated },
+    });
+  }
+
+  return textResponse("Not found.", 404);
+}
+
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+  });
+}
 
 function finalize(response) {
   const headers = new Headers(response.headers);
