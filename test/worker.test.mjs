@@ -146,6 +146,16 @@ async function run() {
   await expectStatus(response, 200, "panel preview/download");
   if ((await response.text()) !== "hello panel") throw new Error("panel file API returned unexpected content");
 
+  response = await dav("PUT", "/panel/api/upload?path=panel-test/100%25.txt", {
+    headers: { "Content-Type": "text/plain" },
+    body: "percent",
+  });
+  await expectStatus(response, 201, "panel upload percent filename");
+
+  response = await dav("GET", "/panel/api/file?path=panel-test/100%25.txt");
+  await expectStatus(response, 200, "panel percent filename read");
+  if ((await response.text()) !== "percent") throw new Error("panel percent filename failed");
+
   response = await dav("POST", "/panel/api/action", {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "rename", source: "panel-test/hello.txt", destination: "panel-test/renamed.txt" }),
