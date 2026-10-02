@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s);
-let config=null,currentPath="",nextCursor=null,allItems=[],filterText="";
+let config=null,currentPath="",nextCursor=null,allItems=[],filterText="";const selected=new Set();
 
 function toast(msg){const el=$("#toast");el.textContent=msg;el.classList.add("show");clearTimeout(window.__toast);window.__toast=setTimeout(()=>el.classList.remove("show"),1800)}
 async function request(path,options={}){const r=await fetch(path,options);if(!r.ok){let msg="HTTP "+r.status;try{const x=await r.json();msg=x.error||msg}catch{}throw new Error(msg)}return r}
@@ -35,11 +35,12 @@ function renderFiles(data){
   const root=document.createElement("button");root.textContent="根目录";root.onclick=()=>loadFiles("",true);bc.append(root);
   let built="";
   currentPath.split("/").filter(Boolean).forEach((part,i)=>{built+= (built?"/":"")+part;const b=document.createElement("button");b.textContent=" / "+part;b.onclick=()=>loadFiles(built,true);bc.append(b)});
-  const list=$("#fileList");list.innerHTML="";
+  const list=$("#fileList");list.innerHTML="";selected.clear();updateBatchBar();
   const shown=allItems.filter(x=>x.name.toLowerCase().includes(filterText.toLowerCase()));
   $("#empty").classList.toggle("hidden",shown.length>0);
   shown.forEach(item=>{
     const row=document.createElement("div");row.className="file-row";
+    const check=document.createElement("input");check.type="checkbox";check.checked=selected.has(item.path);check.onchange=()=>{check.checked?selected.add(item.path):selected.delete(item.path);updateBatchBar()};
     const icon=document.createElement("div");icon.className="file-icon";icon.textContent=item.type==="directory"?"📁":"📄";
     const name=document.createElement("div");name.className="file-name";name.title=item.name;name.textContent=item.name;
     name.onclick=()=>item.type==="directory"?loadFiles(item.path,true):preview(item);
@@ -48,7 +49,7 @@ function renderFiles(data){
     const actions=document.createElement("div");actions.className="row-actions";
     if(item.type==="file"){actions.append(btn("预览",()=>preview(item)));actions.append(btn("下载",()=>download(item)))}
     actions.append(btn("更多",e=>menu(e,item)));
-    row.append(icon,name,meta,date,actions);list.append(row);
+    row.append(check,icon,name,meta,date,actions);list.append(row);
   });
   $("#loadMore").classList.toggle("hidden",!nextCursor);
 }
@@ -81,8 +82,12 @@ function selectFiles(files){[...files].forEach(uploadFile)}
 async function uploadFile(file){
   const item=document.createElement("div");item.className="upload-item";item.innerHTML="<div><strong></strong><span>准备中</span></div><div class='progress'><i></i></div>";item.querySelector("strong").textContent=file.name;$("#uploadQueue").prepend(item);
   const target=(currentPath?currentPath+"/":"")+file.name;try{
-    const r=await fetch(baseUrl("upload")+"?path="+encPath(target),{method:"PUT",headers:{"Content-Type":file.type||"application/octet-stream"},body:file});
-    if(!r.ok)throw new Error("HTTP "+r.status);item.querySelector("span").textContent="完成";item.querySelector("i").style.width="100%";toast("上传完成："+file.name);if(location.hash==="#files")loadFiles(currentPath,true)
+    await new Promise((resolve,reject)=>{
+      const xhr=new XMLHttpRequest();xhr.open("PUT",baseUrl("upload")+"?path="+encPath(target));xhr.setRequestHeader("Content-Type",file.type||"application/octet-stream");
+      xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);item.querySelector("i").style.width=p+"%";item.querySelector("span").textContent=p+"%"}};
+      xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300){item.querySelector("span").textContent="完成";item.querySelector("i").style.width="100%";resolve()}else reject(new Error("HTTP "+xhr.status))};
+      xhr.onerror=()=>reject(new Error("网络错误"));xhr.send(file);
+    });toast("上传完成："+file.name);if(location.hash==="#files")loadFiles(currentPath,true)
   }catch(e){item.querySelector("span").textContent="失败："+e.message}
 }
 function copyText(v){navigator.clipboard.writeText(v).then(()=>toast("已复制")).catch(()=>toast("复制失败"))}
@@ -97,6 +102,10 @@ $("#newFolder").onclick=mkdir;$("#uploadBtn").onclick=()=>{location.hash="upload
 $("#upBtn").onclick=()=>loadFiles(currentPath.split("/").slice(0,-1).join("/"),true);
 $("#loadMore").onclick=()=>loadFiles(currentPath,false);
 $("#search").oninput=e=>{filterText=e.target.value;renderFiles({truncated:Boolean(nextCursor)})};
+$("#selectAll").onchange=e=>{allItems.filter(x=>x.name.toLowerCase().includes(filterText.toLowerCase())).forEach(x=>e.target.checked?selected.add(x.path):selected.delete(x.path));renderFiles({truncated:Boolean(nextCursor)})};
+async function batchDelete(){if(!selected.size)return;if(!confirm("确定删除已选 "+selected.size+" 项吗？"))return;for(const path of [...selected]){await action({action:"delete",source:path,destination:path})}selected.clear();toast("批量删除完成");await loadFiles(currentPath,true)}
+async function batchCopyMove(type){if(!selected.size)return;const destRoot=prompt("输入目标文件夹路径（例如 backups/photos），留空表示根目录");if(destRoot===null)return;for(const path of [...selected]){const name=path.split("/").pop();const dest=(destRoot?destRoot.replace(/^\/+|\/+$/g,"")+"/":"")+name;await action({action:type,source:path,destination:dest})}selected.clear();toast(type==="copy"?"批量复制完成":"批量移动完成");await loadFiles(currentPath,true)}
+$("#batchDelete").onclick=()=>batchDelete();$("#batchCopy").onclick=()=>batchCopyMove("copy");$("#batchMove").onclick=()=>batchCopyMove("move");$("#clearSelection").onclick=()=>{selected.clear();renderFiles({truncated:Boolean(nextCursor)})};
 $("#modalClose").onclick=()=>$("#modal").classList.add("hidden");
 $("#modal").onclick=e=>{if(e.target.id==="modal")$("#modal").classList.add("hidden")};
 $("#fileInput").onchange=e=>selectFiles(e.target.files);
