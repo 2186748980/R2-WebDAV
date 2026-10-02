@@ -222,3 +222,27 @@ Worker 负责提供 WebDAV 接口，R2 负责存文件。你只需要一个 HTTP
 - [Cloudflare R2 Pricing](https://developers.cloudflare.com/r2/pricing/)
 - [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
 - [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
+
+## Management panel
+
+After deployment, open:
+
+- Management panel: `https://r2-webdav.2186.workers.dev/panel/`
+- WebDAV endpoint: `https://r2-webdav.2186.workers.dev/`
+
+The panel is protected by the same `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` Basic Auth credentials. It provides:
+
+- Dashboard and server connection information
+- R2 file/folder browsing with pagination
+- Folder creation
+- Multi-file upload
+- Download and in-browser preview for common image/video/audio/PDF/text formats
+- Rename, copy, move and delete
+- WebDAV/OpenList connection configuration
+- Responsive mobile layout
+
+The panel never returns the WebDAV password through its API. Keep `WEBDAV_PASSWORD` in Cloudflare Worker Secrets.
+
+### Cloudflare Static Assets
+
+The Worker serves `public/panel/` as Workers Static Assets while `run_worker_first` protects the panel and panel API with the existing Basic Auth. The WebDAV root path remains `/` for compatibility with existing clients.
