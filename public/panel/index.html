@@ -48,8 +48,8 @@
     <div class="toolbar-row actions"><label class="search"><span>⌕</span><input id="search" placeholder="搜索当前目录"></label><button id="newFolder">新建文件夹</button><button class="primary" id="uploadBtn">上传文件</button></div>
   </section>
   <section class="card">
-    <div class="file-head"><span id="pathLabel">根目录</span><span id="fileSummary">—</span></div>
-    <div id="fileList" class="file-list"></div>
+    <div class="file-head"><span id="pathLabel">根目录</span><span id="fileSummary">—</span></div><div id="batchBar" class="batch-bar hidden"><span id="selectedCount">已选 0</span><button id="batchDelete">删除</button><button id="batchCopy">复制到…</button><button id="batchMove">移动到…</button><button id="clearSelection">取消选择</button></div>
+    <div class="select-head"><label><input type="checkbox" id="selectAll"> 全选当前目录</label></div><div id="fileList" class="file-list"></div>
     <div id="empty" class="empty hidden">这个目录还没有文件</div>
     <button id="loadMore" class="load-more hidden">加载更多</button>
   </section>
