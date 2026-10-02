@@ -273,8 +273,12 @@ async function handlePanelApi(request, env) {
 
 function panelPathToKey(value) {
   if (!value || value === "/") return "";
-  const normalized = value.startsWith("/") ? value : `/${value}`;
-  return pathToKey(normalized);
+  const normalized = value.startsWith("/") ? value.slice(1) : value;
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment.includes("\\") || segment.includes("\u0000"))) {
+    throw new Error("unsafe panel path");
+  }
+  return segments.join("/");
 }
 
 function jsonResponse(value, status = 200) {
