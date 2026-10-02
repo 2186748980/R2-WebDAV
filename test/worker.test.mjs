@@ -109,7 +109,7 @@ async function expectStatus(response, expected, label) {
 }
 
 async function run() {
-  response = await dav("GET", "/panel", { authenticated: false });
+  let response = await dav("GET", "/panel", { authenticated: false });
   await expectStatus(response, 401, "panel anonymous rejection");
 
   response = await dav("GET", "/panel");
@@ -125,7 +125,7 @@ async function run() {
     throw new Error("panel config API returned unexpected connection details");
   }
 
-  let response = await dav("OPTIONS", "/");
+  response = await dav("OPTIONS", "/");
   await expectStatus(response, 200, "OPTIONS");
   if (!response.headers.get("DAV")?.includes("1")) throw new Error("OPTIONS did not advertise DAV level 1");
 
