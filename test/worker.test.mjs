@@ -84,6 +84,14 @@ const env = {
   R2_BUCKET: new MemoryR2(),
   WEBDAV_USERNAME: "backup-user",
   WEBDAV_PASSWORD: "test-only-password",
+  ASSETS: {
+    async fetch(request) {
+      return new Response("<!doctype html><title>R2-WebDAV</title>", {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    },
+  },
 };
 const authorization = `Basic ${Buffer.from(`${env.WEBDAV_USERNAME}:${env.WEBDAV_PASSWORD}`).toString("base64")}`;
 
@@ -101,6 +109,22 @@ async function expectStatus(response, expected, label) {
 }
 
 async function run() {
+  response = await dav("GET", "/panel", { authenticated: false });
+  await expectStatus(response, 401, "panel anonymous rejection");
+
+  response = await dav("GET", "/panel");
+  await expectStatus(response, 308, "panel redirect");
+
+  response = await dav("GET", "/panel/");
+  await expectStatus(response, 200, "panel asset");
+
+  response = await dav("GET", "/panel/api/config");
+  await expectStatus(response, 200, "panel config API");
+  const panelConfig = await response.json();
+  if (panelConfig.serverUrl !== "https://dav.example/" || panelConfig.panelUrl !== "https://dav.example/panel/" || panelConfig.username !== env.WEBDAV_USERNAME) {
+    throw new Error("panel config API returned unexpected connection details");
+  }
+
   let response = await dav("OPTIONS", "/");
   await expectStatus(response, 200, "OPTIONS");
   if (!response.headers.get("DAV")?.includes("1")) throw new Error("OPTIONS did not advertise DAV level 1");
