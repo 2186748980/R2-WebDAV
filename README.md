@@ -1,153 +1,224 @@
-# Cloudflare R2 WebDAV Backup
+# R2 WebDAV
 
-一个面向 **Android VPN/代理配置备份** 的单用户 WebDAV 服务。它使用 Cloudflare R2 作为私有对象存储，并由 Cloudflare Worker 提供 HTTPS + HTTP Basic Authentication 的 WebDAV 接口。项目的目标是让 Mihomo、Clash、sing-box、OpenList 与常见 WebDAV 客户端可靠地创建目录、上传和覆盖配置、列出目录、下载、复制、移动及删除旧备份。
+把 **Cloudflare R2 变成一个可以通过 WebDAV 访问的私人网盘**。
 
-> 此仓库不包含任何 Cloudflare 账号、域名、Bucket、Worker 地址、用户名、密码、API Token 或其他部署凭据。部署前请将 `wrangler.toml` 中的示例值替换为自己的资源名称。
+这个项目运行在 **Cloudflare Workers** 上，文件实际存放在你自己的 **Cloudflare R2 Bucket** 中。手机、电脑、OpenList 或其他支持 WebDAV 的软件，都可以通过一个 HTTPS 地址访问这些文件。
 
-## 支持范围
+> 适合个人文件、配置文件、备份、照片/视频等轻量场景。
+> 本项目不会把你的 Cloudflare 账号、R2 密钥或 WebDAV 密码写进代码。
 
-| 功能 | 行为 |
-|---|---|
-| 认证 | 所有方法均需要 Basic Auth；认证失败返回 `401` 和 `WWW-Authenticate` |
-| 传输安全 | Worker 通过 HTTPS 地址访问；代码对非 HTTPS 请求执行重定向 |
-| 存储 | 私有 R2 Standard Bucket，经 `R2_BUCKET` Binding 访问 |
-| WebDAV 方法 | `OPTIONS`、`PROPFIND`、`GET`、`HEAD`、`PUT`、`DELETE`、`MKCOL`、`COPY`、`MOVE` |
-| 目录结构 | 使用 `目录名/` 零字节对象作为目录标记，并识别现有对象前缀为隐式目录 |
-| `PROPFIND` | 返回 `DAV:` 命名空间的 `207 Multi-Status` XML，支持 `Depth: 0` 与 `Depth: 1` |
-| 下载 | 支持 `Range`、`ETag`、`Last-Modified` 和内容类型元数据 |
-| 非目标功能 | 不实现匿名访问、多人 ACL、LOCK/UNLOCK、版本历史或无限深度 `PROPFIND` |
-
-该实现适用于小型配置文件备份，而不是大型网盘。Cloudflare Free 站点的请求体上限为 **100 MB**。[1]
-
-## 项目结构
+## 它是怎么工作的？
 
 ```text
-.
-├── src/worker.js            # WebDAV Worker 实现
-├── test/worker.test.mjs     # 内存 R2 模拟集成测试
-├── wrangler.toml            # Worker 与 R2 Binding 示例配置
-├── package.json             # 检查、测试和部署脚本
-└── README.md                # 本说明
+手机 / 电脑 / OpenList
+        │
+        │ WebDAV + HTTPS
+        ▼
+Cloudflare Worker
+        │
+        │ R2 Binding
+        ▼
+你的 Cloudflare R2 Bucket
+        │
+        ▼
+你的文件
 ```
 
-## 部署
+你不需要购买 VPS，也不需要自己维护服务器。
 
-首先确保已安装 Node.js，并使用 `wrangler login` 登录自己的 Cloudflare 账号。复制后请修改 [`wrangler.toml`](./wrangler.toml) 中的两个占位符：`your-webdav-worker` 与 `your-webdav-bucket`。Bucket 名称只能使用小写字母、数字和连字符。
+Worker 负责：
+- WebDAV 协议
+- HTTPS
+- 用户名/密码认证
+- 文件上传、下载、删除
+- 文件夹创建和浏览
+- 文件复制、移动
+- R2 与 WebDAV 之间的数据转换
+
+R2 负责真正保存文件。
+
+## 支持什么？
+
+| 功能 | 支持情况 |
+|---|---|
+| HTTPS | ✅ |
+| Basic Auth 用户名/密码 | ✅ |
+| 上传文件 PUT | ✅ |
+| 下载文件 GET | ✅ |
+| 查看目录 PROPFIND | ✅ Depth 0 / 1 |
+| 创建文件夹 MKCOL | ✅ |
+| 删除文件/文件夹 DELETE | ✅ |
+| 复制 COPY | ✅ |
+| 移动 MOVE | ✅ |
+| Range 下载 | ✅ |
+| ETag / Last-Modified | ✅ |
+| OpenList | ✅ |
+| Mihomo / Clash / sing-box 配置备份 | ✅ |
+| 多用户权限管理 | ❌ |
+| 匿名访问 | ❌ |
+| LOCK / UNLOCK | ❌ |
+
+## 部署前需要什么？
+
+只需要：
+1. 一个 Cloudflare 账号
+2. 一个 R2 Bucket
+3. 一个 Cloudflare Worker
+4. 一个 WebDAV 用户名和密码
+5. 一个支持 WebDAV 的客户端
+
+不需要 VPS、Docker、Linux 服务器或 R2 S3 API Token。
+
+## 快速部署
+
+### 1. 下载项目
 
 ```bash
+git clone https://github.com/2186748980/R2-WebDAV.git
+cd R2-WebDAV
 npm install
+```
+
+### 2. 登录 Cloudflare
+
+```bash
 npx wrangler login
+```
 
-# 创建与 wrangler.toml 中 bucket_name 完全相同的 R2 Standard Bucket。
+### 3. 创建 R2 Bucket
+
+先在 `wrangler.toml` 中把 `bucket_name` 改成你自己的 Bucket 名称，然后创建同名 Bucket：
+
+```bash
 npx wrangler r2 bucket create your-webdav-bucket
+```
 
-# 交互式设置认证凭据；不要把实际值写入文件或 Git。
+### 4. 设置 WebDAV 账号密码
+
+不要把账号密码写进代码。
+
+```bash
 npx wrangler secret put WEBDAV_USERNAME
 npx wrangler secret put WEBDAV_PASSWORD
+```
 
-# 部署 Worker。
+### 5. 部署
+
+```bash
 npx wrangler deploy
 ```
 
-默认配置中 `workers_dev = true`，部署成功后 Wrangler 会显示类似以下的免费 HTTPS 地址：
+部署成功后，Wrangler 会给你一个类似这样的地址：
 
 ```text
-https://your-webdav-worker.your-workers-subdomain.workers.dev/
+https://your-webdav-worker.your-subdomain.workers.dev/
 ```
 
-此项目经 Worker Binding 访问 R2，因此**不需要创建 R2 S3 API Token**，也不需要 VPS。若希望使用自己的域名，可在拥有活动 Cloudflare Zone 的前提下添加 Worker Custom Domain。[2]
+这个地址就是你的 WebDAV 地址。
 
-## 修改用户名或密码
+## 在 OpenList 中使用
 
-密码和用户名仅保存在 Cloudflare Worker Secrets。不要修改代码或 `wrangler.toml`。更新后客户端使用新的值即可，无需重新上传 Worker 代码。
+在 OpenList 中新增存储，选择 **WebDAV**。
 
-```bash
-npx wrangler secret put WEBDAV_PASSWORD
-npx wrangler secret put WEBDAV_USERNAME
-```
-
-## curl 验证示例
-
-将环境变量替换为自己的部署结果。上传文件时使用 `--data-binary`，防止 curl 修改换行符或截断二进制内容。
-
-```bash
-export DAV_URL='https://your-webdav-worker.your-workers-subdomain.workers.dev'
-export DAV_USER='your-webdav-username'
-export DAV_PASSWORD='your-webdav-password'
-
-# 声明与认证
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X OPTIONS "$DAV_URL/"
-
-# 创建目录
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X MKCOL "$DAV_URL/backups"
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X MKCOL "$DAV_URL/backups/mihomo"
-
-# 上传或覆盖配置
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X PUT \
-  --data-binary @config.yaml \
-  -H 'Content-Type: application/yaml' \
-  "$DAV_URL/backups/mihomo/config.yaml"
-
-# 列目录，返回 207 Multi-Status XML
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X PROPFIND \
-  -H 'Depth: 1' "$DAV_URL/backups/mihomo/"
-
-# 下载与查看元数据
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X HEAD "$DAV_URL/backups/mihomo/config.yaml"
-curl -f -u "$DAV_USER:$DAV_PASSWORD" -o restored.yaml \
-  "$DAV_URL/backups/mihomo/config.yaml"
-
-# 复制与移动
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X COPY \
-  -H "Destination: $DAV_URL/backups/mihomo/config-copy.yaml" \
-  -H 'Overwrite: F' \
-  "$DAV_URL/backups/mihomo/config.yaml"
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X MOVE \
-  -H "Destination: $DAV_URL/backups/mihomo/sing-box.json" \
-  -H 'Overwrite: F' \
-  "$DAV_URL/backups/mihomo/config-copy.yaml"
-
-# 删除旧备份
-curl -i -u "$DAV_USER:$DAV_PASSWORD" -X DELETE \
-  "$DAV_URL/backups/mihomo/config.yaml"
-```
-
-## OpenList 配置
-
-在 OpenList 管理后台新增存储时选择 **WebDAV**，然后填入实际部署后的根地址，不要额外附加 `webdav`、`dav` 等路径。根路径可使用 `/`；若只希望暴露备份内容，可填 `/backups`。
-
-| OpenList 字段 | 建议值 |
+| 项目 | 填写内容 |
 |---|---|
-| 驱动 | WebDAV |
-| WebDAV 地址 | `https://your-webdav-worker.your-workers-subdomain.workers.dev/` |
+| 地址 | 你的 Worker HTTPS 地址 |
 | 用户名 | `WEBDAV_USERNAME` 的实际值 |
 | 密码 | `WEBDAV_PASSWORD` 的实际值 |
-| 根文件夹/路径 | `/` 或 `/backups` |
-| TLS 证书验证 | 保持启用；不要跳过验证 |
+| 根路径 | `/` 或 `/backups` |
+| TLS 证书验证 | 开启 |
 
-## 免费额度与使用边界
+注意：地址一般不要再额外添加 `/webdav`、`/dav` 等路径。
 
-本项目使用 R2 Standard 存储，以适用每月 **10 GB-month 存储、100 万次 Class A 与 1000 万次 Class B 操作**的 R2 免费额度；R2 到互联网的出口流量免费。[3] Workers Free 提供每天 **10 万请求**，每次 HTTP 调用最多 10 ms CPU。[1]
+## 手机 / 电脑客户端
 
-在轻量配置备份场景中，这些额度通常足够。若超出 R2 或 Workers Free 的免费额度，Cloudflare 可能拒绝后续请求或按照其计费规则处理；本项目不会自动启用付费功能。为避免大规模目录操作，`PROPFIND` 被限制为 `Depth: 0` 或 `Depth: 1`，每次直接子项列举最多为 1000 项。
+只要软件支持 WebDAV，就可以连接。
 
-## 本地验证
+填写：
 
-无需 Cloudflare 凭据即可执行模拟 R2 的完整核心流程测试：
+```text
+服务器地址：你的 Worker 地址
+用户名：你的 WebDAV 用户名
+密码：你的 WebDAV 密码
+```
+
+## 配置文件备份
+
+这个项目特别适合保存小型配置文件，例如：
+
+```text
+/backups/
+├── mihomo/
+│   ├── config.yaml
+│   └── providers.yaml
+├── sing-box/
+│   └── config.json
+└── other/
+    └── backup.txt
+```
+
+## 本地测试
+
+不需要 Cloudflare 账号即可运行模拟 R2 测试：
 
 ```bash
 npm run check
 npm test
 ```
 
-测试覆盖 `OPTIONS`、匿名拒绝、`MKCOL`、新建和覆盖 `PUT`、`PROPFIND` XML、`GET`、`HEAD`、`COPY`、`MOVE` 与 `DELETE`。
+测试覆盖 OPTIONS、Basic Auth、MKCOL、PUT/覆盖上传、PROPFIND、GET、HEAD、COPY、MOVE 和 DELETE。
 
-## 安全发布检查
+## 安全注意事项
 
-发布仓库前，务必保持下列文件未被 Git 跟踪：`.deploy_credentials.json`、`.dev.vars`、`.cf_*`、`node_modules/`。本仓库的 `.gitignore` 已覆盖这些位置。绝不要提交实际的 `WEBDAV_USERNAME`、`WEBDAV_PASSWORD`、Cloudflare API Token 或任何 R2 S3 凭据。
+不要把 `WEBDAV_USERNAME`、`WEBDAV_PASSWORD`、Cloudflare API Token、R2 S3 Access Key 或 R2 S3 Secret Key 提交到 GitHub。
 
-## References
+项目使用 Worker Secrets 保存 WebDAV 账号密码。
 
-[1]: https://developers.cloudflare.com/workers/platform/limits/ "Cloudflare Workers limits"
-[2]: https://developers.cloudflare.com/workers/configuration/routing/custom-domains/ "Cloudflare Workers Custom Domains"
-[3]: https://developers.cloudflare.com/r2/pricing/ "Cloudflare R2 pricing"
+也不要关闭认证，否则任何知道 Worker 地址的人都有可能访问你的文件。
+
+## R2 和 WebDAV 的关系
+
+R2 本质上是对象存储，并没有传统服务器那种真正的文件夹。
+
+例如：
+
+```text
+backups/mihomo/config.yaml
+```
+
+本质上是一个 R2 对象。Worker 会把这些对象转换成 WebDAV 客户端看到的文件和目录。
+
+## 使用边界
+
+这个项目更适合个人使用和轻量文件存储。如果大量上传视频、频繁同步或进行大规模目录扫描，需要根据 Cloudflare 当前的 Workers / R2 额度和计费规则评估成本。
+
+## 项目结构
+
+```text
+R2-WebDAV/
+├── src/
+│   └── worker.js          # WebDAV 核心代码
+├── test/
+│   └── worker.test.mjs    # 本地模拟 R2 测试
+├── wrangler.toml          # Worker + R2 配置
+├── package.json
+└── README.md
+```
+
+## 自定义域名
+
+默认可以使用 `workers.dev` 地址。如果你有 Cloudflare 托管的域名，也可以给 Worker 配置 Custom Domain，例如 `https://dav.example.com`。
+
+## 一句话总结
+
+**R2 WebDAV = Cloudflare Worker + Cloudflare R2 + WebDAV。**
+
+Worker 负责提供 WebDAV 接口，R2 负责存文件。你只需要一个 HTTPS 地址，就可以从手机、电脑和 OpenList 访问自己的文件。
+
+## 相关文档
+
+- [Cloudflare Workers](https://developers.cloudflare.com/workers/)
+- [Cloudflare R2](https://developers.cloudflare.com/r2/)
+- [Cloudflare R2 Pricing](https://developers.cloudflare.com/r2/pricing/)
+- [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
