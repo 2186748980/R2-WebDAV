@@ -96,9 +96,9 @@ export default {
 
 async function handlePanelApi(request, env) {
   const url = new URL(request.url);
-  if (request.method !== "GET") return textResponse("Method not allowed.", 405);
+  const pathname = url.pathname;
 
-  if (url.pathname === "/panel/api/config") {
+  if (pathname === "/panel/api/config" && request.method === "GET") {
     let files = 0;
     let folders = 0;
     let truncated = false;
@@ -118,7 +118,163 @@ async function handlePanelApi(request, env) {
     });
   }
 
+  if (pathname === "/panel/api/list" && request.method === "GET") {
+    let prefix;
+    try {
+      prefix = panelPathToKey(url.searchParams.get("path") || "");
+    } catch {
+      return jsonResponse({ error: "Invalid path." }, 400);
+    }
+    const cursor = url.searchParams.get("cursor") || undefined;
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 200), 1), 1000);
+    const page = await env.R2_BUCKET.list({ prefix: collectionPrefix(prefix), delimiter: "/", cursor, limit });
+    const items = [];
+    for (const object of page.objects) {
+      if (object.key === collectionMarker(prefix)) continue;
+      items.push({
+        name: displayNameFor(object.key),
+        path: object.key,
+        type: "file",
+        size: object.size,
+        uploaded: object.uploaded,
+        contentType: object.httpMetadata?.contentType || "application/octet-stream",
+        etag: object.httpEtag || quoteETag(object.etag),
+      });
+    }
+    for (const childPrefix of page.delimitedPrefixes) {
+      const key = childPrefix.endsWith("/") ? childPrefix.slice(0, -1) : childPrefix;
+      const marker = await env.R2_BUCKET.head(childPrefix);
+      items.push({
+        name: displayNameFor(key),
+        path: key,
+        type: "directory",
+        size: 0,
+        uploaded: marker?.uploaded || null,
+        contentType: "application/x-webdav-collection",
+      });
+    }
+    items.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1);
+    return jsonResponse({
+      path: prefix,
+      parent: parentKey(prefix),
+      items,
+      truncated: Boolean(page.truncated),
+      cursor: page.truncated ? page.cursor : null,
+    });
+  }
+
+  if (pathname === "/panel/api/file" && request.method === "GET") {
+    let key;
+    try {
+      key = panelPathToKey(url.searchParams.get("path") || "");
+    } catch {
+      return textResponse("Invalid path.", 400);
+    }
+    if (!key) return textResponse("A collection cannot be downloaded.", 400);
+    const resource = await findResource(env.R2_BUCKET, key);
+    if (!resource) return textResponse("Not found.", 404);
+    if (resource.kind === "directory") return textResponse("A collection cannot be downloaded.", 400);
+    return handleGet(request, env.R2_BUCKET, key, false);
+  }
+
+  if (pathname === "/panel/api/download" && request.method === "GET") {
+    let key;
+    try {
+      key = panelPathToKey(url.searchParams.get("path") || "");
+    } catch {
+      return textResponse("Invalid path.", 400);
+    }
+    if (!key) return textResponse("Invalid path.", 400);
+    const resource = await findResource(env.R2_BUCKET, key);
+    if (!resource || resource.kind !== "file") return textResponse("Not found.", 404);
+    const response = await handleGet(request, env.R2_BUCKET, key, false);
+    const headers = new Headers(response.headers);
+    headers.set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(displayNameFor(key))}`);
+    return new Response(response.body, { status: response.status, headers });
+  }
+
+  if (pathname === "/panel/api/upload" && request.method === "PUT") {
+    let key;
+    try {
+      key = panelPathToKey(url.searchParams.get("path") || "");
+    } catch {
+      return textResponse("Invalid path.", 400);
+    }
+    if (!key) return textResponse("Invalid upload path.", 400);
+    const parent = await findResource(env.R2_BUCKET, parentKey(key));
+    if (!parent || parent.kind !== "directory") return textResponse("Parent collection does not exist.", 409);
+    const existing = await findResource(env.R2_BUCKET, key);
+    if (existing?.kind === "directory") return textResponse("A collection already exists at this path.", 409);
+    await env.R2_BUCKET.put(key, request.body, {
+      httpMetadata: { contentType: request.headers.get("Content-Type") || "application/octet-stream" },
+    });
+    return jsonResponse({ ok: true, path: key, overwritten: Boolean(existing) }, existing ? 200 : 201);
+  }
+
+  if (pathname === "/panel/api/action" && request.method === "POST") {
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return jsonResponse({ error: "Invalid JSON." }, 400);
+    }
+    try {
+      if (payload.action === "mkdir") {
+        const key = panelPathToKey(payload.path || "");
+        if (!key) return jsonResponse({ error: "Invalid folder path." }, 400);
+        const parent = await findResource(env.R2_BUCKET, parentKey(key));
+        if (!parent || parent.kind !== "directory") return jsonResponse({ error: "Parent folder does not exist." }, 409);
+        if (await findResource(env.R2_BUCKET, key)) return jsonResponse({ error: "Destination already exists." }, 409);
+        await createCollectionMarker(env.R2_BUCKET, key);
+        return jsonResponse({ ok: true, path: key }, 201);
+      }
+
+      const sourceKey = panelPathToKey(payload.source || "");
+      const destinationKey = panelPathToKey(payload.destination || "");
+      if (!sourceKey || !destinationKey || sourceKey === destinationKey) return jsonResponse({ error: "Invalid source or destination." }, 400);
+      const source = await findResource(env.R2_BUCKET, sourceKey);
+      if (!source) return jsonResponse({ error: "Source not found." }, 404);
+      const destinationParent = await findResource(env.R2_BUCKET, parentKey(destinationKey));
+      if (!destinationParent || destinationParent.kind !== "directory") return jsonResponse({ error: "Destination folder does not exist." }, 409);
+      if (source.kind === "directory" && destinationKey.startsWith(collectionPrefix(sourceKey))) {
+        return jsonResponse({ error: "Destination cannot be inside the source folder." }, 403);
+      }
+      if (payload.action === "delete") {
+        if (source.kind === "file") await env.R2_BUCKET.delete(sourceKey);
+        else await deleteCollection(env.R2_BUCKET, sourceKey);
+        return jsonResponse({ ok: true });
+      }
+      const existing = await findResource(env.R2_BUCKET, destinationKey);
+      if (existing) return jsonResponse({ error: "Destination already exists." }, 409);
+      if (payload.action === "rename" || payload.action === "move") {
+        if (source.kind === "file") {
+          await copyFile(env.R2_BUCKET, sourceKey, destinationKey);
+          await env.R2_BUCKET.delete(sourceKey);
+        } else {
+          await copyCollection(env.R2_BUCKET, sourceKey, destinationKey);
+          await deleteCollection(env.R2_BUCKET, sourceKey);
+        }
+        return jsonResponse({ ok: true, path: destinationKey });
+      }
+      if (payload.action === "copy") {
+        if (source.kind === "file") await copyFile(env.R2_BUCKET, sourceKey, destinationKey);
+        else await copyCollection(env.R2_BUCKET, sourceKey, destinationKey);
+        return jsonResponse({ ok: true, path: destinationKey });
+      }
+      return jsonResponse({ error: "Unknown action." }, 400);
+    } catch (error) {
+      console.error("Panel action failed", { message: String(error?.message || error) });
+      return jsonResponse({ error: "Operation failed." }, 500);
+    }
+  }
+
   return textResponse("Not found.", 404);
+}
+
+function panelPathToKey(value) {
+  if (!value || value === "/") return "";
+  const normalized = value.startsWith("/") ? value : `/${value}`;
+  return pathToKey(normalized);
 }
 
 function jsonResponse(value, status = 200) {
