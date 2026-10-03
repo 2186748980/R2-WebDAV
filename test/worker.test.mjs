@@ -5,7 +5,9 @@ const encoder = new TextEncoder();
 class MemoryR2 {
   constructor() {
     this.objects = new Map();
+    this.uploads = new Map();
     this.sequence = 0;
+    this.uploadSequence = 0;
   }
 
   async put(key, value, options = {}) {
@@ -41,6 +43,33 @@ class MemoryR2 {
     for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key);
   }
 
+  async createMultipartUpload(key, options = {}) {
+    const uploadId = "upload-" + (++this.uploadSequence);
+    this.uploads.set(uploadId, { key, options, parts: new Map() });
+    return { key, uploadId };
+  }
+
+  resumeMultipartUpload(key, uploadId) {
+    const upload = this.uploads.get(uploadId);
+    if (!upload || upload.key !== key) throw new Error("invalid upload");
+    return {
+      key,
+      uploadId,
+      async uploadPart(partNumber, value) {
+        const bytes = await toBytes(value);
+        upload.parts.set(partNumber, bytes);
+        return { partNumber, etag: "part-" + partNumber };
+      },
+      async complete(parts) {
+        const ordered = [...parts].sort((a,b) => a.partNumber - b.partNumber);
+        const bytes = concatBytes(ordered.map(part => upload.parts.get(part.partNumber)));
+        const result = await thisPut(key, bytes, upload.options);
+        return { key, httpEtag: result.httpEtag };
+      },
+      async abort() { this.uploads?.delete(uploadId); }
+    };
+  }
+
   async list({ prefix = "", delimiter, limit = 1000 } = {}) {
     const keys = [...this.objects.keys()].filter((key) => key.startsWith(prefix)).sort();
     const objects = [];
@@ -55,6 +84,19 @@ class MemoryR2 {
     }
     return { objects: objects.slice(0, limit), delimitedPrefixes: [...prefixes].sort(), truncated: false };
   }
+}
+
+function concatBytes(chunks) {
+  const total = chunks.reduce((n, chunk) => n + chunk.byteLength, 0);
+  const out = new Uint8Array(total); let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+  return out;
+}
+
+let activeBucket;
+async function thisPut(key, bytes, options) {
+  await activeBucket.put(key, bytes, options);
+  return await activeBucket.head(key);
 }
 
 function metadata(key, stored) {
@@ -80,8 +122,9 @@ async function toBytes(value) {
   return new Uint8Array(await new Response(value).arrayBuffer());
 }
 
+const bucket = new MemoryR2();
 const env = {
-  R2_BUCKET: new MemoryR2(),
+  R2_BUCKET: bucket,
   WEBDAV_USERNAME: "backup-user",
   WEBDAV_PASSWORD: "test-only-password",
   ASSETS: {
@@ -93,6 +136,7 @@ const env = {
     },
   },
 };
+activeBucket = bucket;
 const authorization = `Basic ${Buffer.from(`${env.WEBDAV_USERNAME}:${env.WEBDAV_PASSWORD}`).toString("base64")}`;
 
 async function dav(method, path, { headers = {}, body, authenticated = true } = {}) {
@@ -130,6 +174,17 @@ async function run() {
   const rootListing = await response.json();
   if (!Array.isArray(rootListing.items)) throw new Error("panel list API returned invalid items");
 
+  response = await dav("GET", "/panel/api/health");
+  await expectStatus(response, 200, "panel health API");
+
+  response = await dav("GET", "/panel/api/stats");
+  await expectStatus(response, 200, "panel stats API");
+
+  response = await dav("GET", "/panel/api/search?q=hello");
+  await expectStatus(response, 200, "panel search API");
+  if (!Array.isArray((await response.json()).items)) throw new Error("panel search API returned invalid items");
+
+
   response = await dav("POST", "/panel/api/action", {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "mkdir", path: "panel-test" }),
@@ -145,6 +200,41 @@ async function run() {
   response = await dav("GET", "/panel/api/file?path=panel-test/hello.txt");
   await expectStatus(response, 200, "panel preview/download");
   if ((await response.text()) !== "hello panel") throw new Error("panel file API returned unexpected content");
+
+  response = await dav("POST", "/panel/api/upload/multipart", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: "panel-test/big.bin", contentType: "application/octet-stream" }),
+  });
+  await expectStatus(response, 201, "multipart create");
+  const uploadInfo = await response.json();
+
+  response = await dav("PUT", "/panel/api/upload/multipart/part?path=panel-test/big.bin&uploadId="+encodeURIComponent(uploadInfo.uploadId)+"&partNumber=1", {
+    body: "part-one",
+  });
+  await expectStatus(response, 200, "multipart part");
+  const part = await response.json();
+
+  response = await dav("POST", "/panel/api/upload/multipart/complete?path=panel-test/big.bin&uploadId="+encodeURIComponent(uploadInfo.uploadId), {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parts: [part] }),
+  });
+  await expectStatus(response, 200, "multipart complete");
+
+  response = await dav("GET", "/panel/api/file?path=panel-test/big.bin");
+  await expectStatus(response, 200, "multipart file read");
+  if ((await response.text()) !== "part-one") throw new Error("multipart content mismatch");
+
+  response = await dav("POST", "/panel/api/share", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: "panel-test/big.bin", expiresIn: 3600 }),
+  });
+  await expectStatus(response, 200, "share link creation");
+  const share = await response.json();
+  const shareUrl = new URL(share.url);
+  response = await dav("GET", shareUrl.pathname);
+  await expectStatus(response, 200, "public share access");
+  if ((await response.text()) !== "part-one") throw new Error("share content mismatch");
+
 
   response = await dav("PUT", "/panel/api/upload?path=panel-test/100%25.txt", {
     headers: { "Content-Type": "text/plain" },
