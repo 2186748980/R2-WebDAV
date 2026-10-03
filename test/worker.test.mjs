@@ -231,8 +231,8 @@ async function run() {
   await expectStatus(response, 200, "share link creation");
   const share = await response.json();
   const shareUrl = new URL(share.url);
-  response = await dav("GET", shareUrl.pathname);
-  await expectStatus(response, 200, "public share access");
+  response = await dav("GET", shareUrl.pathname, { authenticated: false });
+  await expectStatus(response, 200, "anonymous public share access");
   if ((await response.text()) !== "part-one") throw new Error("share content mismatch");
 
 
