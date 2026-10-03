@@ -235,13 +235,40 @@ The panel is protected by the same `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` Basic A
 - Dashboard and server connection information
 - R2 file/folder browsing with pagination
 - Folder creation
-- Multi-file upload
+- Multi-file upload with progress
+- Small files stream directly; large files automatically use R2 Multipart
+- Pause / continue / cancel / automatic retry for uploads
 - Download and in-browser preview for common image/video/audio/PDF/text formats
-- Rename, copy, move and delete
+- Rename, copy, move and batch delete/copy/move
+- Current-directory filtering plus recursive search
+- List/grid view and name/time/size sorting
+- Storage statistics and R2 health check
+- Temporary single-file share links (1 hour / 24 hours / 7 days)
 - WebDAV/OpenList connection configuration
 - Responsive mobile layout
 
 The panel never returns the WebDAV password through its API. Keep `WEBDAV_PASSWORD` in Cloudflare Worker Secrets.
+
+### Large files
+
+The management panel automatically switches to R2 Multipart for files at or above 20 MiB. R2 multipart supports objects up to 5 TiB and up to 10,000 parts; each non-final part must be at least 5 MiB. The browser keeps the multipart upload state locally for the active page, so an interrupted browser session is not automatically resumed after a refresh.
+
+### Temporary sharing
+
+The file context menu can generate a read-only temporary URL. The URL is stateless and signed with HMAC-SHA-256 using the current `WEBDAV_PASSWORD` as the signing secret. Expiration is limited to 7 days. Changing `WEBDAV_PASSWORD` invalidates previously generated share URLs.
+
+Share URLs bypass Basic Auth by design, but they only expose the single file represented by the signed token. They do not expose directory listing, WebDAV operations, or the management panel.
+
+### Current design boundaries
+
+This project intentionally remains a single-user private cloud:
+- one Basic Auth account
+- no RBAC / multi-user database
+- delete is immediate; there is no recycle bin
+- browser multipart uploads are resumable only while the current page retains their upload state
+- WebDAV `LOCK` / `UNLOCK` are still not implemented
+
+For stronger disaster recovery, keep an independent R2 backup or lifecycle/versioning strategy rather than treating this Worker as the only copy.
 
 ### Cloudflare Static Assets
 
