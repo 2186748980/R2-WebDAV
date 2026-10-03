@@ -347,19 +347,21 @@ async function handlePanelApi(request, env) {
       }
 
       const sourceKey = panelPathToKey(payload.source || "");
-      const destinationKey = panelPathToKey(payload.destination || "");
-      if (!sourceKey || !destinationKey || sourceKey === destinationKey) return jsonResponse({ error: "Invalid source or destination." }, 400);
+      if (!sourceKey) return jsonResponse({ error: "Invalid source." }, 400);
       const source = await findResource(env.R2_BUCKET, sourceKey);
       if (!source) return jsonResponse({ error: "Source not found." }, 404);
-      const destinationParent = await findResource(env.R2_BUCKET, parentKey(destinationKey));
-      if (!destinationParent || destinationParent.kind !== "directory") return jsonResponse({ error: "Destination folder does not exist." }, 409);
-      if (source.kind === "directory" && destinationKey.startsWith(collectionPrefix(sourceKey))) {
-        return jsonResponse({ error: "Destination cannot be inside the source folder." }, 403);
-      }
       if (payload.action === "delete") {
         if (source.kind === "file") await env.R2_BUCKET.delete(sourceKey);
         else await deleteCollection(env.R2_BUCKET, sourceKey);
         return jsonResponse({ ok: true });
+      }
+
+      const destinationKey = panelPathToKey(payload.destination || "");
+      if (!destinationKey || sourceKey === destinationKey) return jsonResponse({ error: "Invalid destination." }, 400);
+      const destinationParent = await findResource(env.R2_BUCKET, parentKey(destinationKey));
+      if (!destinationParent || destinationParent.kind !== "directory") return jsonResponse({ error: "Destination folder does not exist." }, 409);
+      if (source.kind === "directory" && destinationKey.startsWith(collectionPrefix(sourceKey))) {
+        return jsonResponse({ error: "Destination cannot be inside the source folder." }, 403);
       }
       const existing = await findResource(env.R2_BUCKET, destinationKey);
       if (existing) return jsonResponse({ error: "Destination already exists." }, 409);
