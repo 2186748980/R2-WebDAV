@@ -43,6 +43,10 @@ export default {
     }
     if (url.pathname.startsWith("/panel/")) {
       if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
+      if (url.pathname === "/panel/") {
+        const assetUrl = new URL("/panel/index.html", request.url);
+        return finalize(await env.ASSETS.fetch(new Request(assetUrl, request)));
+      }
       return finalize(await env.ASSETS.fetch(request));
     }
 
