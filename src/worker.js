@@ -21,6 +21,10 @@ export default {
       return finalize(textResponse("WebDAV service is not configured.", 503));
     }
 
+    if (url.pathname.startsWith("/share/")) {
+      return finalize(await handlePublicShare(request, env));
+    }
+
     if (!isAuthorized(request, env)) {
       return finalize(new Response("Authentication required.", {
         status: 401,
@@ -118,6 +122,52 @@ async function handlePanelApi(request, env) {
     });
   }
 
+  if (pathname === "/panel/api/health" && request.method === "GET") {
+    try {
+      const started = Date.now();
+      await env.R2_BUCKET.list({ limit: 1 });
+      return jsonResponse({ ok: true, r2: true, latencyMs: Date.now() - started, time: new Date().toISOString() });
+    } catch (error) {
+      console.error("Panel health check failed", { message: String(error?.message || error) });
+      return jsonResponse({ ok: false, r2: false, time: new Date().toISOString() }, 503);
+    }
+  }
+
+  if (pathname === "/panel/api/stats" && request.method === "GET") {
+    try {
+      return jsonResponse(await collectBucketStats(env.R2_BUCKET, 5000));
+    } catch (error) {
+      console.error("Panel stats failed", { message: String(error?.message || error) });
+      return jsonResponse({ error: "Unable to read storage statistics." }, 503);
+    }
+  }
+
+  if (pathname === "/panel/api/search" && request.method === "GET") {
+    let prefix;
+    try { prefix = panelPathToKey(url.searchParams.get("path") || ""); } catch { return jsonResponse({ error: "Invalid path." }, 400); }
+    const query = (url.searchParams.get("q") || "").trim().toLowerCase();
+    if (!query) return jsonResponse({ items: [], truncated: false, scanned: 0 });
+    return jsonResponse(await searchObjects(env.R2_BUCKET, prefix, query, 500));
+  }
+
+  if (pathname === "/panel/api/share" && request.method === "POST") {
+    let payload;
+    try { payload = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON." }, 400); }
+    try {
+      const key = panelPathToKey(payload.path || "");
+      if (!key) return jsonResponse({ error: "Invalid file path." }, 400);
+      const resource = await findResource(env.R2_BUCKET, key);
+      if (!resource || resource.kind !== "file") return jsonResponse({ error: "File not found." }, 404);
+      const requestedSeconds = Number(payload.expiresIn || 86400);
+      const expiresIn = Math.min(Math.max(Number.isFinite(requestedSeconds) ? requestedSeconds : 86400, 300), 604800);
+      const exp = Math.floor(Date.now() / 1000) + expiresIn;
+      const token = await createShareToken(key, exp, env.WEBDAV_PASSWORD);
+      return jsonResponse({ url: new URL("/share/" + token, request.url).toString(), expiresAt: new Date(exp * 1000).toISOString() });
+    } catch {
+      return jsonResponse({ error: "Unable to create share link." }, 400);
+    }
+  }
+
   if (pathname === "/panel/api/list" && request.method === "GET") {
     let prefix;
     try {
@@ -211,6 +261,73 @@ async function handlePanelApi(request, env) {
     return jsonResponse({ ok: true, path: key, overwritten: Boolean(existing) }, existing ? 200 : 201);
   }
 
+  if (pathname === "/panel/api/upload/multipart" && request.method === "POST") {
+    let payload;
+    try { payload = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON." }, 400); }
+    try {
+      const key = panelPathToKey(payload.path || "");
+      if (!key) return jsonResponse({ error: "Invalid upload path." }, 400);
+      const parent = await findResource(env.R2_BUCKET, parentKey(key));
+      if (!parent || parent.kind !== "directory") return jsonResponse({ error: "Parent collection does not exist." }, 409);
+      const existing = await findResource(env.R2_BUCKET, key);
+      if (existing?.kind === "directory") return jsonResponse({ error: "A collection already exists at this path." }, 409);
+      const upload = await env.R2_BUCKET.createMultipartUpload(key, {
+        httpMetadata: { contentType: payload.contentType || "application/octet-stream" },
+      });
+      return jsonResponse({ key: upload.key, uploadId: upload.uploadId, overwritten: Boolean(existing) }, existing ? 200 : 201);
+    } catch (error) {
+      console.error("Multipart create failed", { message: String(error?.message || error) });
+      return jsonResponse({ error: "Unable to create multipart upload." }, 500);
+    }
+  }
+
+  if (pathname === "/panel/api/upload/multipart/part" && request.method === "PUT") {
+    const keyValue = url.searchParams.get("path") || "";
+    const uploadId = url.searchParams.get("uploadId") || "";
+    const partNumber = Number(url.searchParams.get("partNumber"));
+    try {
+      const key = panelPathToKey(keyValue);
+      if (!key || !uploadId || !Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000 || !request.body) {
+        return jsonResponse({ error: "Invalid multipart part request." }, 400);
+      }
+      const part = await env.R2_BUCKET.resumeMultipartUpload(key, uploadId).uploadPart(partNumber, request.body);
+      return jsonResponse(part);
+    } catch {
+      return jsonResponse({ error: "Multipart part upload failed." }, 400);
+    }
+  }
+
+  if (pathname === "/panel/api/upload/multipart/complete" && request.method === "POST") {
+    const keyValue = url.searchParams.get("path") || "";
+    const uploadId = url.searchParams.get("uploadId") || "";
+    try {
+      const key = panelPathToKey(keyValue);
+      if (!key || !uploadId) return jsonResponse({ error: "Invalid multipart completion request." }, 400);
+      const payload = await request.json();
+      if (!Array.isArray(payload.parts) || !payload.parts.length || payload.parts.length > 10000) return jsonResponse({ error: "Invalid multipart parts." }, 400);
+      const parts = payload.parts.map(part => ({ partNumber: Number(part.partNumber), etag: String(part.etag) }));
+      if (parts.some(part => !Number.isInteger(part.partNumber) || part.partNumber < 1 || part.partNumber > 10000 || !part.etag)) return jsonResponse({ error: "Invalid multipart part metadata." }, 400);
+      parts.sort((a,b) => a.partNumber - b.partNumber);
+      const object = await env.R2_BUCKET.resumeMultipartUpload(key, uploadId).complete(parts);
+      return jsonResponse({ ok: true, key: object.key, etag: object.httpEtag });
+    } catch {
+      return jsonResponse({ error: "Multipart completion failed." }, 400);
+    }
+  }
+
+  if (pathname === "/panel/api/upload/multipart" && request.method === "DELETE") {
+    const keyValue = url.searchParams.get("path") || "";
+    const uploadId = url.searchParams.get("uploadId") || "";
+    try {
+      const key = panelPathToKey(keyValue);
+      if (!key || !uploadId) return jsonResponse({ error: "Invalid multipart abort request." }, 400);
+      await env.R2_BUCKET.resumeMultipartUpload(key, uploadId).abort();
+      return jsonResponse({ ok: true });
+    } catch {
+      return jsonResponse({ error: "Multipart abort failed." }, 400);
+    }
+  }
+
   if (pathname === "/panel/api/action" && request.method === "POST") {
     let payload;
     try {
@@ -269,6 +386,99 @@ async function handlePanelApi(request, env) {
   }
 
   return textResponse("Not found.", 404);
+}
+
+
+async function collectBucketStats(bucket, maxObjects = 5000) {
+  let cursor;
+  let files = 0, folders = 0, bytes = 0, scanned = 0, truncated = false;
+  do {
+    const page = await bucket.list({ cursor, limit: 1000 });
+    for (const object of page.objects) {
+      scanned += 1;
+      if (object.key.endsWith("/")) folders += 1;
+      else { files += 1; bytes += object.size || 0; }
+      if (scanned >= maxObjects) { truncated = page.truncated || scanned >= maxObjects; break; }
+    }
+    if (truncated || !page.truncated) break;
+    cursor = page.cursor;
+  } while (cursor);
+  return { files, folders, bytes, scanned, truncated };
+}
+
+async function searchObjects(bucket, prefix, query, maxResults) {
+  let cursor;
+  const items = [];
+  let scanned = 0, truncated = false;
+  do {
+    const page = await bucket.list({ prefix: collectionPrefix(prefix), cursor, limit: 1000 });
+    for (const object of page.objects) {
+      scanned += 1;
+      if (object.key.endsWith("/")) continue;
+      if (object.key.toLowerCase().includes(query)) {
+        items.push({ name: displayNameFor(object.key), path: object.key, type: "file", size: object.size, uploaded: object.uploaded, contentType: object.httpMetadata?.contentType || "application/octet-stream" });
+        if (items.length >= maxResults) { truncated = true; break; }
+      }
+    }
+    if (truncated || !page.truncated || scanned >= 10000) break;
+    cursor = page.cursor;
+  } while (cursor);
+  return { items, truncated: truncated || Boolean(cursor), scanned };
+}
+
+async function createShareToken(key, exp, secret) {
+  const payload = base64UrlEncode(JSON.stringify({ key, exp }));
+  return payload + "." + await signSharePayload(payload, secret);
+}
+
+async function verifyShareToken(token, secret) {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, signature] = parts;
+  const expected = await signSharePayload(payload, secret);
+  if (!constantTimeEqual(expected, signature)) return null;
+  try {
+    const data = JSON.parse(base64UrlDecode(payload));
+    if (!data?.key || !Number.isSafeInteger(data.exp) || data.exp < Math.floor(Date.now() / 1000)) return null;
+    return data;
+  } catch { return null; }
+}
+
+async function signSharePayload(payload, secret) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return base64UrlEncode(signature);
+}
+
+function base64UrlEncode(value) {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : new Uint8Array(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecode(value) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
+  return new TextDecoder().decode(Uint8Array.from(atob(padded), c => c.charCodeAt(0)));
+}
+
+async function handlePublicShare(request, env) {
+  if (!env.WEBDAV_PASSWORD) return textResponse("Share service is not configured.", 503);
+  const url = new URL(request.url);
+  const token = url.pathname.slice("/share/".length);
+  if (request.method !== "GET" || !token) return textResponse("Invalid share request.", 400);
+  const data = await verifyShareToken(token, env.WEBDAV_PASSWORD);
+  if (!data) return textResponse("Share link expired or invalid.", 404);
+  try {
+    const response = await handleGet(request, env.R2_BUCKET, data.key, false);
+    if (response.status >= 400) return response;
+    const headers = new Headers(response.headers);
+    headers.set("Content-Disposition", "inline; filename*=UTF-8''" + encodeURIComponent(displayNameFor(data.key)));
+    headers.set("Cache-Control", "private, max-age=60");
+    return new Response(response.body, { status: response.status, headers });
+  } catch {
+    return textResponse("Shared file is unavailable.", 404);
+  }
 }
 
 function panelPathToKey(value) {
