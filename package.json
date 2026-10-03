@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "check": "node --check src/worker.js",
+    "check": "node --check src/worker.js && node --check public/panel/app.js",
     "test": "node test/worker.test.mjs",
     "dev": "npx wrangler dev",
     "deploy": "npx wrangler deploy"
