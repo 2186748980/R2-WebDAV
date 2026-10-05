@@ -166,7 +166,7 @@ npm run check
 npm test
 ```
 
-测试覆盖 OPTIONS、Basic Auth、MKCOL、PUT/覆盖上传、PROPFIND、GET、HEAD、COPY、MOVE 和 DELETE。
+测试覆盖：管理面板三个入口（`/panel`、`/panel/`、`/panel/index.html`，认证后必须 200 且无重定向）、面板全部 API（config/list/file/download/upload/multipart/action/stats/health/search/share）、WebDAV 全方法（OPTIONS、PROPFIND、GET、HEAD、PUT、DELETE、MKCOL、COPY、MOVE）、Range 请求、ETag 条件请求、中文/空格/% 文件名、路径穿越防护、分享链接签名与过期。
 
 ## 安全注意事项
 

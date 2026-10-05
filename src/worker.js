@@ -35,18 +35,19 @@ export default {
       }));
     }
 
-    if (url.pathname === "/panel") {
-      return finalize(Response.redirect(new URL("/panel/", request.url), 308));
+    // Panel entry points are served explicitly and never redirect. With
+    // html_handling = "none" the asset pipeline returns /panel/index.html
+    // directly, so /panel, /panel/ and /panel/index.html all yield 200 HTML.
+    if (url.pathname === "/panel" || url.pathname === "/panel/" || url.pathname === "/panel/index.html") {
+      if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
+      const assetUrl = new URL("/panel/index.html", request.url);
+      return finalize(await env.ASSETS.fetch(new Request(assetUrl, request)));
     }
     if (url.pathname.startsWith("/panel/api/")) {
       return finalize(await handlePanelApi(request, env));
     }
     if (url.pathname.startsWith("/panel/")) {
       if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
-      if (url.pathname === "/panel/") {
-        const assetUrl = new URL("/panel/index.html", request.url);
-        return finalize(await env.ASSETS.fetch(new Request(assetUrl, request)));
-      }
       return finalize(await env.ASSETS.fetch(request));
     }
 
@@ -479,6 +480,12 @@ async function handlePublicShare(request, env) {
     const response = await handleGet(request, env.R2_BUCKET, data.key, false);
     if (response.status >= 400) return response;
     const headers = new Headers(response.headers);
+    // Share links are served anonymously: never hand executable document
+    // types to the browser, or a shared file could run script against this
+    // origin. Regular media, PDF and plain-text types are unaffected.
+    if (/^\s*(text\/html|image\/svg\+xml|application\/xhtml\+xml)/i.test(headers.get("Content-Type") || "")) {
+      headers.set("Content-Type", "text/plain; charset=utf-8");
+    }
     headers.set("Content-Disposition", "inline; filename*=UTF-8''" + encodeURIComponent(displayNameFor(data.key)));
     headers.set("Cache-Control", "private, max-age=60");
     return new Response(response.body, { status: response.status, headers });
@@ -609,11 +616,11 @@ async function findResource(bucket, key) {
 }
 
 async function handleGet(request, bucket, key, headOnly) {
-  if (!key) return textResponse("A collection cannot be downloaded as a file.", 405, DAV_HEADERS);
+  if (!key) return collectionResponse(request, headOnly);
 
   const directory = await findResource(bucket, key);
   if (directory?.kind === "directory") {
-    return textResponse("A collection cannot be downloaded as a file.", 405, DAV_HEADERS);
+    return collectionResponse(request, headOnly);
   }
 
   const metadata = await bucket.head(key);
@@ -624,8 +631,9 @@ async function handleGet(request, bucket, key, headOnly) {
     return new Response(null, { status: 304, headers: objectHeaders(metadata, etag) });
   }
 
-  const range = parseRange(request.headers.get("Range"), metadata.size);
-  if (request.headers.has("Range") && !range) {
+  const rangeHeader = request.headers.get("Range");
+  const range = parseRange(rangeHeader, metadata.size);
+  if (range === null) {
     return new Response(null, {
       status: 416,
       headers: { "Content-Range": `bytes */${metadata.size}`, ...objectHeaders(metadata, etag) },
@@ -656,6 +664,25 @@ async function handleGet(request, bucket, key, headOnly) {
   return new Response(object.body, { status: 200, headers });
 }
 
+// GET on a collection is not a file download. WebDAV clients keep receiving
+// the compliant 405 response, while a normal browser (Accept: text/html) gets
+// a small landing page that points at the management panel.
+function collectionResponse(request, headOnly) {
+  const accept = request.headers.get("Accept") || "";
+  if (!headOnly && request.method.toUpperCase() === "GET" && accept.includes("text/html")) {
+    return new Response(BROWSER_LANDING_HTML, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8", ...DAV_HEADERS },
+    });
+  }
+  return textResponse("A collection cannot be downloaded as a file.", 405, DAV_HEADERS);
+}
+
+const BROWSER_LANDING_HTML = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>R2-WebDAV</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}main{text-align:center;padding:2rem}a{color:#7dd3fc}code{background:#1e293b;padding:.2rem .5rem;border-radius:.4rem}</style></head>
+<body><main><h1>R2-WebDAV 私有云</h1><p>此地址是 WebDAV 服务端点，请使用 WebDAV 客户端连接。</p><p>浏览器管理面板请访问 <a href="/panel/">/panel/</a></p><p><code>服务器</code> 填本页地址，<code>账号</code> 使用 WebDAV 用户名和密码。</p></main></body></html>`;
+
 function objectHeaders(object, etag) {
   const headers = new Headers(DAV_HEADERS);
   if (typeof object.writeHttpMetadata === "function") {
@@ -679,26 +706,32 @@ function etagMatches(ifNoneMatch, etag) {
   return ifNoneMatch.split(",").map((value) => value.trim()).some((value) => value === "*" || value === etag || value === `W/${etag}`);
 }
 
+// Returns { offset, length } for a satisfiable single range, null when the
+// range is well-formed but unsatisfiable (416), and false when the header
+// should be ignored in favour of a full 200 response (absent, malformed,
+// multi-range, or an empty object). Ignoring unsupported ranges instead of
+// rejecting them keeps video players and resuming downloaders working.
 function parseRange(header, size) {
-  if (!header || size === 0) return null;
+  if (!header) return false;
   const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
-  if (!match) return null;
+  if (!match) return false;
   const [, startText, endText] = match;
-  if (!startText && !endText) return null;
+  if ((!startText && !endText) || size === 0) return false;
 
   let offset;
   let end;
   if (!startText) {
     const suffixLength = Number(endText);
-    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return false;
     offset = Math.max(size - suffixLength, 0);
     end = size - 1;
   } else {
     offset = Number(startText);
     end = endText ? Number(endText) : size - 1;
-    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(end) || offset < 0 || end < offset || offset >= size) return null;
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(end) || offset < 0 || end < offset) return false;
     end = Math.min(end, size - 1);
   }
+  if (offset >= size) return null;
   return { offset, length: end - offset + 1 };
 }
 

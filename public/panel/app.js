@@ -78,7 +78,7 @@ function menu(ev,item){
   c.style.left=Math.min(innerWidth-190,ev.clientX)+"px";c.style.top=Math.min(innerHeight-210,ev.clientY)+"px";c.classList.remove("hidden");
 }
 async function action(payload){await request(baseUrl("action"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})}
-async function removeItem(item){if(!confirm("确定删除“"+item.name+"”吗？"+(item.type==="directory"?"\n文件夹内内容也会删除。":"")))return;try{await action({action:"delete",source:item.path,destination:item.path});toast("已删除");await loadFiles(currentPath,true)}catch(e){toast("删除失败："+e.message)}}
+async function removeItem(item){if(!confirm("确定删除“"+item.name+"”吗？"+(item.type==="directory"?"\n文件夹内内容也会删除。":"")))return;try{await action({action:"delete",source:item.path});toast("已删除");await loadFiles(currentPath,true)}catch(e){toast("删除失败："+e.message)}}
 async function rename(item){const name=prompt("输入新名称",item.name);if(!name||name===item.name)return;const dest=(currentPath?currentPath+"/":"")+name;try{await action({action:"rename",source:item.path,destination:dest});toast("已重命名");await loadFiles(currentPath,true)}catch(e){toast("重命名失败："+e.message)}}
 async function copyMove(item,type){const name=prompt((type==="copy"?"复制":"移动")+"到文件名/路径",item.name);if(!name)return;const dest=name.startsWith("/")?name.slice(1):(currentPath?currentPath+"/":"")+name;try{await action({action:type,source:item.path,destination:dest});toast(type==="copy"?"已复制":"已移动");await loadFiles(currentPath,true)}catch(e){toast((type==="copy"?"复制":"移动")+"失败："+e.message)}}
 function download(item){location.href=baseUrl("download")+"?path="+encPath(item.path)}
@@ -149,6 +149,7 @@ async function simpleUpload(record){
 }
 async function multipartUpload(record){
   const file=record.file,partSize=10*1024*1024,partCount=Math.ceil(file.size/partSize);
+  if(record.uploadId){try{await apiJson(baseUrl("upload/multipart")+"?path="+encPath(record.target)+"&uploadId="+encPath(record.uploadId),{method:"DELETE"})}catch{}record.uploadId=null}
   const created=await apiJson(baseUrl("upload/multipart"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:record.target,contentType:file.type||"application/octet-stream"})});
   record.uploadId=created.uploadId;const parts=[];let completedBytes=0;
   for(let n=1;n<=partCount;n++){
@@ -184,7 +185,7 @@ $("#clearSearch").onclick=()=>{filterText="";$("#search").value="";loadFiles(cur
 $("#sortMode").onchange=e=>{sortMode=e.target.value;renderFiles({truncated:Boolean(nextCursor)})};
 $("#listMode").onclick=()=>{viewMode="list";renderFiles({truncated:Boolean(nextCursor)})};$("#gridMode").onclick=()=>{viewMode="grid";renderFiles({truncated:Boolean(nextCursor)})};
 $("#selectAll").onchange=e=>{const shown=allItems.filter(x=>x.name.toLowerCase().includes(filterText.toLowerCase()));shown.forEach(x=>e.target.checked?selected.add(x.path):selected.delete(x.path));renderFiles({truncated:Boolean(nextCursor)})};
-async function batchDelete(){if(!selected.size)return;if(!confirm("确定删除已选 "+selected.size+" 项吗？"))return;for(const path of [...selected])await action({action:"delete",source:path,destination:path});selected.clear();toast("批量删除完成");await loadFiles(currentPath,true)}
+async function batchDelete(){if(!selected.size)return;if(!confirm("确定删除已选 "+selected.size+" 项吗？"))return;for(const path of [...selected])await action({action:"delete",source:path});selected.clear();toast("批量删除完成");await loadFiles(currentPath,true)}
 async function batchCopyMove(type){if(!selected.size)return;const destRoot=prompt("输入目标文件夹路径（例如 backups/photos），留空表示根目录");if(destRoot===null)return;for(const path of [...selected]){const name=path.split("/").pop();const dest=(destRoot?destRoot.replace(/^\/+|\/+$/g,"")+"/":"")+name;await action({action:type,source:path,destination:dest})}selected.clear();toast(type==="copy"?"批量复制完成":"批量移动完成");await loadFiles(currentPath,true)}
 $("#batchDelete").onclick=()=>batchDelete();$("#batchCopy").onclick=()=>batchCopyMove("copy");$("#batchMove").onclick=()=>batchCopyMove("move");$("#clearSelection").onclick=()=>{selected.clear();renderFiles({truncated:Boolean(nextCursor)})};
 $("#modalClose").onclick=()=>$("#modal").classList.add("hidden");$("#modal").onclick=e=>{if(e.target.id==="modal")$("#modal").classList.add("hidden")};
