@@ -241,27 +241,23 @@ Worker 负责提供 WebDAV 接口，R2 负责存文件。你只需要一个 HTTP
 
 After deployment, open:
 
-- Management panel: `https://r2-webdav.2186.workers.dev/panel/`
+- Management panel: `https://r2-webdav.2186.workers.dev/panel/`（未登录时显示独立登录页）
 - WebDAV endpoint: `https://r2-webdav.2186.workers.dev/`
 
-The panel is protected by the same `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` Basic Auth credentials. It provides:
+The panel shell (`/panel`、`/panel/style.css`、`/panel/js/*`) is intentionally public — it contains no data. Login uses the same `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` credentials and exchanges them for a short-lived HMAC-signed HttpOnly cookie (24 h); media previews and download links authenticate with that cookie. The API (`/panel/api/*`) requires Basic Auth or a valid session cookie at all times, and the password itself is never stored by the frontend. Changing `WEBDAV_PASSWORD` invalidates all sessions and share links immediately.
 
-- Dashboard and server connection information
-- R2 file/folder browsing with pagination
-- Folder creation
-- Multi-file upload with progress
-- Small files stream directly; large files automatically use R2 Multipart
-- Pause / continue / cancel / automatic retry for uploads
-- Download and in-browser preview for common image/video/audio/PDF/text formats
-- Rename, copy, move and batch delete/copy/move
-- Current-directory filtering plus recursive search
-- List/grid view and name/time/size sorting
-- Storage statistics and R2 health check
-- Temporary single-file share links (1 hour / 24 hours / 7 days)
-- WebDAV/OpenList connection configuration
-- Responsive mobile layout
+The panel provides:
 
-The panel never returns the WebDAV password through its API. Keep `WEBDAV_PASSWORD` in Cloudflare Worker Secrets.
+- Branded login view (inline error handling, no native browser dialog)
+- File browser with list/grid views, sortable columns, breadcrumbs and load-more pagination
+- Current-directory filtering plus Enter-to-run global search with result paths
+- Drag-and-drop upload anywhere, file picker, and a floating upload tray with progress, pause/resume, cancel and retry; files ≥20 MiB automatically use R2 multipart
+- Inline dialogs for new folder / rename / copy / move, recursive-delete confirmation, file details, preview (image/video/audio/PDF/text ≤2 MiB) and temporary share links (1 h / 24 h / 7 d)
+- Batch selection with delete / copy / move
+- Light/dark/auto theme, responsive layout with mobile drawer navigation and bottom-sheet action menus
+- Overview dashboard (server address, username, storage stats, R2 health) and WebDAV connection guide
+
+The panel never returns or stores the WebDAV password. Keep `WEBDAV_PASSWORD` in Cloudflare Worker Secrets.
 
 ### Large files
 

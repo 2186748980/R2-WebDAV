@@ -1,101 +1,194 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light"><meta name="description" content="R2-WebDAV private cloud management panel"><title>R2-WebDAV · Private Cloud</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="R2-WebDAV 私有云管理面板">
+<title>R2-WebDAV · 私有云</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ctext x='16' y='21.5' font-family='system-ui,sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3ER2%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/panel/style.css">
 </head>
 <body>
-<div class="app">
-<aside class="sidebar">
-  <div class="brand"><span class="brand-mark">R2</span><div><strong>R2-WebDAV</strong><small>Private Cloud</small></div></div>
-  <nav>
-    <a href="#overview" data-nav="overview" class="nav-item active">概览</a>
-    <a href="#files" data-nav="files" class="nav-item">文件</a>
-    <a href="#upload" data-nav="upload" class="nav-item">上传</a>
-    <a href="#webdav" data-nav="webdav" class="nav-item">WebDAV</a>
-    <a href="#settings" data-nav="settings" class="nav-item">设置</a>
-  </nav>
-  <div class="sidebar-foot">Cloudflare Worker + R2</div>
-</aside>
-<main class="main">
-<header class="topbar"><div><span class="eyebrow">PRIVATE CLOUD</span><h1 id="pageTitle">概览</h1></div><button class="icon-btn" id="refresh" title="刷新">↻</button></header>
 
-<section id="view-overview" class="view">
-  <section class="hero card">
-    <div class="status-line"><span class="dot"></span><span>服务运行中</span><span id="healthStatus" class="badge ok">检查中…</span></div>
-    <div class="server-label">服务器地址</div>
-    <div class="server-row"><code id="serverUrl">加载中…</code><button class="copy-btn" data-copy="serverUrl">复制</button></div>
-    <div class="quick-actions"><button class="primary" data-goto="files">文件管理</button><button data-goto="upload">上传文件</button><button data-goto="webdav">WebDAV 配置</button></div>
-  </section>
-  <section class="grid">
-    <article class="card"><div class="card-title"><span>WebDAV</span><span class="badge ok">已启用</span></div>
-      <div class="kv"><span>用户名</span><code id="username">—</code><button class="copy-mini" data-copy="username">复制</button></div>
-      <div class="kv"><span>密码</span><code>••••••••</code><span class="secret-note">已配置</span></div>
-    </article>
-    <article class="card"><div class="card-title"><span>根目录</span><span class="badge ok">R2</span></div>
-      <div class="stats"><div><strong id="fileCount">—</strong><small>文件</small></div><div><strong id="folderCount">—</strong><small>文件夹</small></div></div>
-    </article>
-  </section>
-  <section class="grid">
-    <article class="card"><div class="card-title"><span>存储统计</span><span class="muted" id="statsNote">统计中…</span></div>
-      <div class="stats"><div><strong id="totalFiles">—</strong><small>总文件</small></div><div><strong id="totalFolders">—</strong><small>文件夹</small></div><div><strong id="totalSize">—</strong><small>对象大小</small></div></div>
-    </article>
-    <article class="card"><div class="card-title"><span>安全</span><span class="badge ok">Private</span></div><p class="muted">WebDAV 与管理面板使用同一组 Basic Auth。临时分享链接不需要暴露账号密码，修改密码会同时使旧分享链接失效。</p></article>
-  </section>
-  <section class="card"><div class="section-head"><div><span class="eyebrow">SYSTEM</span><h2>服务器信息</h2></div></div>
-    <div class="info-grid"><div><span>HTTPS</span><strong>正常</strong></div><div><span>Worker</span><strong>运行中</strong></div><div><span>R2</span><strong>已连接</strong></div><div><span>WebDAV</span><strong>DAV Level 1</strong></div></div>
-  </section>
+<!-- 登录 -->
+<section id="login" class="login hidden">
+  <div class="login-card">
+    <div class="brand login-brand"><span class="brand-mark">R2</span><div class="brand-text"><strong>R2-WebDAV</strong><small>Private Cloud</small></div></div>
+    <h1>登录管理面板</h1>
+    <p class="login-sub">使用 WebDAV 账号密码登录</p>
+    <form id="loginForm" novalidate>
+      <label class="field"><span>用户名</span><input class="input" id="loginUser" autocomplete="username" autocapitalize="none" required></label>
+      <label class="field"><span>密码</span><input class="input" id="loginPass" type="password" autocomplete="current-password" required></label>
+      <p id="loginError" class="form-error hidden" role="alert"></p>
+      <button class="btn primary block" type="submit" id="loginSubmit">登 录</button>
+    </form>
+    <p class="login-foot">会话在本浏览器保留 24 小时，修改密码后立即失效</p>
+  </div>
 </section>
 
-<section id="view-files" class="view hidden">
-  <section class="card file-toolbar">
-    <div class="toolbar-row"><button id="upBtn">← 上一级</button><div id="breadcrumb" class="breadcrumb"></div></div>
-    <div class="toolbar-row actions">
-      <label class="search"><span>⌕</span><input id="search" placeholder="搜索当前目录，回车进行全局搜索"></label>
-      <button id="globalSearch">全局搜索</button><button id="clearSearch">清除</button>
-      <select id="sortMode"><option value="name">按名称</option><option value="date">按时间</option><option value="size">按大小</option></select>
-      <button id="listMode">列表</button><button id="gridMode">网格</button><button id="newFolder">新建文件夹</button><button class="primary" id="uploadBtn">上传文件</button>
+<!-- 应用 -->
+<div id="app" class="app hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><span class="brand-mark">R2</span><div class="brand-text"><strong>R2-WebDAV</strong><small>Private Cloud</small></div></div>
+    <nav class="nav">
+      <button class="nav-item" data-nav="overview"><span data-icon="home"></span>概览</button>
+      <button class="nav-item" data-nav="files"><span data-icon="folder"></span>文件</button>
+      <button class="nav-item" data-nav="webdav"><span data-icon="globe"></span>WebDAV</button>
+      <button class="nav-item" data-nav="settings"><span data-icon="sliders"></span>设置</button>
+    </nav>
+    <div class="sidebar-foot">
+      <button class="btn ghost block" id="logoutBtn"><span data-icon="logout"></span>退出登录</button>
     </div>
-    <div id="globalSearchHint" class="notice hidden"></div>
-  </section>
-  <section class="card">
-    <div class="file-head"><span id="pathLabel">根目录</span><span id="fileSummary">—</span></div>
-    <div id="batchBar" class="batch-bar hidden"><span id="selectedCount">已选 0</span><button id="batchDelete">删除</button><button id="batchCopy">复制到…</button><button id="batchMove">移动到…</button><button id="clearSelection">取消选择</button></div>
-    <div class="select-head"><label><input type="checkbox" id="selectAll"> 全选当前结果</label></div>
-    <div id="fileList" class="file-list list"></div>
-    <div id="empty" class="empty hidden">这个目录还没有文件</div><button id="loadMore" class="load-more hidden">加载更多</button>
-  </section>
-</section>
+  </aside>
+  <div class="backdrop" id="backdrop"></div>
 
-<section id="view-upload" class="view hidden">
-  <section class="card upload-card">
-    <div class="section-head"><div><span class="eyebrow">UPLOAD</span><h2>上传文件</h2><p class="muted">当前目录：<code id="uploadPath">跟随文件管理器</code></p></div></div>
-    <label class="dropzone" id="dropzone"><input type="file" id="fileInput" multiple><strong>选择文件或拖到这里</strong><span>20 MB 以下直接流式上传；更大的文件自动使用 R2 Multipart，支持暂停、取消、失败重试。</span></label>
-    <div class="notice">大文件分片大小为 10 MiB。R2 Multipart 支持最大 5 TiB 对象；未完成的分片上传会由 R2 自动清理。</div>
-    <div id="uploadQueue" class="upload-queue"></div>
-  </section>
-</section>
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn only-mobile" id="menuBtn" title="菜单" aria-label="打开菜单"><span data-icon="menu"></span></button>
+      <div class="topbar-title"><span class="eyebrow" id="pageEyebrow">OVERVIEW</span><h1 id="pageTitle">概览</h1></div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="trayBtn" title="上传列表" aria-label="上传列表"><span data-icon="upload"></span><span id="trayBadge" class="badge-count hidden">0</span></button>
+        <button class="icon-btn" id="themeBtn" title="切换深浅色" aria-label="切换深浅色"><span data-icon="moon"></span></button>
+        <button class="icon-btn" id="refreshBtn" title="刷新" aria-label="刷新"><span data-icon="refresh"></span></button>
+      </div>
+    </header>
 
-<section id="view-webdav" class="view hidden">
-  <section class="card"><div class="section-head"><div><span class="eyebrow">WEBDAV</span><h2>连接配置</h2></div><button id="copyConfig">复制配置</button></div>
-    <div class="config-box"><div><span>WebDAV 地址</span><code id="davUrl">—</code><button class="copy-mini" data-copy="davUrl">复制</button></div><div><span>面板地址</span><code id="panelUrl">—</code><button class="copy-mini" data-copy="panelUrl">复制</button></div><div><span>用户名</span><code id="username2">—</code><button class="copy-mini" data-copy="username2">复制</button></div><div><span>密码</span><code>••••••••</code><span class="secret-note">Worker Secret</span></div></div>
-    <div class="notice">密码不会从 Worker 返回到网页。需要修改密码时，请在 Cloudflare Worker Secrets 中修改 <code>WEBDAV_PASSWORD</code>。</div>
-  </section>
-  <section class="card"><h2>客户端说明</h2><div class="help-grid"><div><strong>OpenList</strong><span>类型选择 WebDAV，地址填写上方 WebDAV 地址，根路径可以直接使用 /。</span></div><div><strong>Android WebDAV</strong><span>使用相同地址、用户名和密码即可；视频播放依赖客户端的 Range 支持。</span></div><div><strong>浏览器分享</strong><span>文件菜单可生成 1 小时、24 小时或 7 天临时链接，仅能访问单个文件。</span></div><div><strong>隐私</strong><span>分享链接使用密码派生的 HMAC 签名，不会把 WebDAV 密码写进 URL。</span></div></div></section>
-</section>
+    <section id="view-overview" class="view">
+      <div class="grid g-2">
+        <div class="card">
+          <div class="status-row"><span class="dot" id="healthDot"></span><span id="healthText">检查中…</span></div>
+          <div class="server-line"><span class="muted-label">服务器地址</span><code id="serverUrl">—</code></div>
+          <div class="quick-row"><button class="btn primary" data-goto="files">进入文件管理</button><button class="btn ghost" data-goto="webdav">连接配置</button></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>存储概览</h2><span class="badge" id="r2Badge">检查中…</span></div>
+          <div class="stat-grid">
+            <div class="stat"><strong id="statFiles">—</strong><span>文件</span></div>
+            <div class="stat"><strong id="statFolders">—</strong><span>文件夹</span></div>
+            <div class="stat"><strong id="statBytes">—</strong><span>已用空间</span></div>
+          </div>
+          <p class="muted" id="statsNote"></p>
+        </div>
+      </div>
+      <div class="grid g-2">
+        <div class="card">
+          <div class="card-head"><h2>账号</h2><span class="badge ok">已启用</span></div>
+          <div class="kv"><span>用户名</span><code id="username">—</code><button class="btn ghost sm" data-copy="username">复制</button></div>
+          <div class="kv"><span>密码</span><code>••••••••</code><span class="badge">仅存于 Worker Secret</span></div>
+          <div class="kv"><span>R2 存储</span><span id="r2Status">检查中…</span></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>安全</h2><span class="badge ok">Private</span></div>
+          <p class="muted">面板登录与 WebDAV 使用同一套账号密码。登录会话由 HttpOnly Cookie 承载；临时分享链接由密码派生签名，修改密码后旧链接与会话同时失效。</p>
+        </div>
+      </div>
+    </section>
 
-<section id="view-settings" class="view hidden">
-  <section class="card"><div class="section-head"><div><span class="eyebrow">SETTINGS</span><h2>服务设置</h2></div></div>
-    <div class="settings-list"><div><span>Worker 地址</span><code id="settingsUrl">—</code></div><div><span>认证方式</span><strong>HTTP Basic Auth</strong></div><div><span>存储</span><strong>Cloudflare R2</strong></div><div><span>传输</span><strong>HTTPS only</strong></div><div><span>大文件上传</span><strong>R2 Multipart</strong></div><div><span>分享</span><strong>HMAC 临时链接</strong></div></div>
-  </section>
-  <section class="card"><h2>安全说明</h2><p class="muted">面板与 WebDAV 共用现有 Basic Auth。密码只保存在 Worker Secret 中，不写入仓库，也不会由面板 API 返回。临时分享链接最长 7 天，并使用当前密码作为签名密钥；修改密码后旧链接自动失效。</p></section>
-  <section class="card"><h2>当前边界</h2><p class="muted">单用户模型、Basic Auth、无回收站。删除操作是立即删除；如果文件很重要，请在 R2 侧另做备份或版本化策略。大文件已使用 Multipart，但浏览器刷新后暂不自动恢复未完成任务。</p></section>
-</section>
-</main>
+    <section id="view-files" class="view hidden">
+      <div class="card list-card">
+        <div class="files-toolbar">
+          <div class="crumbs" id="breadcrumb"></div>
+          <div class="toolbar-actions">
+            <label class="search-box"><span data-icon="search"></span><input id="searchInput" placeholder="筛选当前目录，回车全局搜索"></label>
+            <select id="sortSelect" class="input select-sm" title="排序">
+              <option value="name">按名称</option>
+              <option value="date">按时间</option>
+              <option value="size">按大小</option>
+            </select>
+            <div class="seg" id="viewToggle" role="group" aria-label="视图切换">
+              <button data-mode="list" title="列表视图" aria-label="列表视图"><span data-icon="list"></span></button>
+              <button data-mode="grid" title="网格视图" aria-label="网格视图"><span data-icon="grid"></span></button>
+            </div>
+            <button class="btn ghost" id="newFolderBtn"><span data-icon="folder-plus"></span>文件夹</button>
+            <button class="btn primary" id="uploadBtn"><span data-icon="upload"></span>上传</button>
+          </div>
+        </div>
+        <div id="globalHint" class="global-hint hidden"></div>
+        <div id="batchBar" class="batch-bar hidden">
+          <span id="selCount">已选 0 项</span>
+          <div class="batch-actions">
+            <button class="btn ghost sm" id="batchCopy">复制到…</button>
+            <button class="btn ghost sm" id="batchMove">移动到…</button>
+            <button class="btn danger sm" id="batchDelete">删除</button>
+            <button class="btn ghost sm" id="clearSel">取消</button>
+          </div>
+        </div>
+        <div class="list-head" id="listHead">
+          <label class="cell-check head-check"><input type="checkbox" id="selectAll" title="全选"></label>
+          <button class="col col-name" data-sort="name">名称<span class="sort-ind"></span></button>
+          <button class="col col-size" data-sort="size">大小<span class="sort-ind"></span></button>
+          <button class="col col-date" data-sort="date">修改时间<span class="sort-ind"></span></button>
+          <span class="col col-actions"></span>
+        </div>
+        <div id="fileList" class="file-list list" role="list"></div>
+        <div id="listState" class="list-state hidden"></div>
+        <button id="loadMoreBtn" class="btn ghost block load-more hidden">加载更多</button>
+      </div>
+    </section>
+
+    <section id="view-webdav" class="view hidden">
+      <div class="card">
+        <div class="card-head"><h2>连接配置</h2><button class="btn ghost sm" id="copyConfigBtn">复制全部</button></div>
+        <div class="kv"><span>WebDAV 地址</span><code id="davUrl">—</code><button class="btn ghost sm" data-copy="davUrl">复制</button></div>
+        <div class="kv"><span>面板地址</span><code id="panelUrl">—</code><button class="btn ghost sm" data-copy="panelUrl">复制</button></div>
+        <div class="kv"><span>用户名</span><code id="username2">—</code><button class="btn ghost sm" data-copy="username2">复制</button></div>
+        <div class="kv"><span>密码</span><code>••••••••</code><span class="badge">仅存于 Worker Secret</span></div>
+        <p class="muted">WebDAV 客户端直接使用上方地址与账号密码（HTTP Basic 认证）；网页面板通过登录换取浏览器会话，密码本身不会存入网页。</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>客户端说明</h2></div>
+        <div class="help-grid">
+          <div><strong>OpenList / Alist</strong><span>存储类型选 WebDAV，地址填上方 WebDAV 地址，根路径直接使用 /。</span></div>
+          <div><strong>Android 客户端</strong><span>使用相同地址、用户名和密码；视频播放依赖客户端的 Range 支持。</span></div>
+          <div><strong>浏览器分享</strong><span>文件菜单可生成 1 小时 / 24 小时 / 7 天临时链接，仅能访问单个文件。</span></div>
+          <div><strong>隐私</strong><span>分享链接使用密码派生的 HMAC 签名，不会把密码写进 URL。</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view hidden">
+      <div class="card">
+        <div class="card-head"><h2>外观</h2></div>
+        <div class="kv"><span>主题</span>
+          <div class="seg" id="themeSeg">
+            <button data-theme-mode="auto">自动</button>
+            <button data-theme-mode="light">浅色</button>
+            <button data-theme-mode="dark">深色</button>
+          </div>
+        </div>
+        <div class="kv"><span>登录会话</span><span id="sessionUser">—</span><button class="btn ghost sm" id="logoutBtn2">退出登录</button></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>服务信息</h2></div>
+        <div class="kv"><span>Worker 地址</span><code id="settingsUrl">—</code></div>
+        <div class="kv"><span>认证方式</span><strong>HTTP Basic Auth + Cookie 会话</strong></div>
+        <div class="kv"><span>存储</span><strong>Cloudflare R2</strong></div>
+        <div class="kv"><span>传输</span><strong>HTTPS only</strong></div>
+        <div class="kv"><span>大文件上传</span><strong>R2 Multipart（≥20 MiB）</strong></div>
+        <div class="kv"><span>分享</span><strong>HMAC 临时链接（最长 7 天）</strong></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>当前边界</h2></div>
+        <p class="muted">单用户模型、无回收站，删除立即生效。大文件分片上传的暂停与续传在当前页面生命周期内有效，刷新页面后不会自动恢复。如需更强容灾，请在 R2 侧另做备份或版本化策略。</p>
+      </div>
+    </section>
+
+    <footer class="main-foot">Cloudflare Worker + R2</footer>
+  </main>
 </div>
-<div id="context" class="context hidden"></div>
-<div class="modal hidden" id="modal"><div class="modal-box"><div class="modal-head"><h3 id="modalTitle"></h3><button id="modalClose">×</button></div><div id="modalBody"></div></div></div>
-<div class="toast" id="toast"></div>
+
+<!-- 全局组件 -->
+<div id="dropOverlay" class="drop-overlay hidden"><div class="drop-inner"><span data-icon="upload"></span><strong>松开上传到当前目录</strong></div></div>
+<div id="tray" class="tray hidden">
+  <div class="tray-head"><strong>上传列表</strong><button class="icon-btn sm" id="trayClose" aria-label="收起"><span data-icon="x"></span></button></div>
+  <div class="tray-list" id="trayList"></div>
+</div>
+<div id="menu" class="menu hidden"></div>
+<div id="modal" class="modal hidden"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<input type="file" id="fileInput" multiple class="hidden-input">
+
 <script src="/panel/app.js" type="module"></script>
-</body></html>
+</body>
+</html>

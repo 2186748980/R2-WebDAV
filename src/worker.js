@@ -10,9 +10,12 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Never accept Basic credentials over plain HTTP. A Workers custom domain
-    // normally supplies TLS at the edge; this is a defense-in-depth redirect.
-    if (url.protocol !== "https:") {
+    // Never accept Basic credentials over plain HTTP: redirect to HTTPS.
+    // Loopback hosts are exempt — plaintext never leaves the machine there,
+    // and local dev / UI testing (wrangler dev) needs a plain-HTTP server.
+    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".localhost");
+    if (url.protocol !== "https:" && !isLoopback) {
       url.protocol = "https:";
       return finalize(new Response(null, { status: 301, headers: { Location: url.toString() } }));
     }
@@ -25,7 +28,30 @@ export default {
       return finalize(await handlePublicShare(request, env));
     }
 
-    if (!isAuthorized(request, env)) {
+    // The panel shell (HTML/CSS/JS) is public on purpose: it contains no data
+    // and lets the app render its own login view instead of the native
+    // browser dialog. Everything under /panel/api/ stays authenticated.
+    if (url.pathname === "/panel" || url.pathname.startsWith("/panel/")) {
+      if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
+      if (url.pathname.startsWith("/panel/api/")) {
+        if (url.pathname === "/panel/api/session") {
+          return finalize(await handlePanelSession(request, env));
+        }
+        if (!(await isAuthorized(request, env))) {
+          return finalize(jsonResponse({ error: "Authentication required." }, 401, {
+            "WWW-Authenticate": 'Basic realm="Cloudflare R2 WebDAV", charset="UTF-8"',
+          }));
+        }
+        return finalize(await handlePanelApi(request, env));
+      }
+      if (url.pathname === "/panel" || url.pathname === "/panel/" || url.pathname === "/panel/index.html") {
+        const assetUrl = new URL("/panel/index.html", request.url);
+        return finalize(await env.ASSETS.fetch(new Request(assetUrl, request)));
+      }
+      return finalize(await env.ASSETS.fetch(request));
+    }
+
+    if (!(await isAuthorized(request, env))) {
       return finalize(new Response("Authentication required.", {
         status: 401,
         headers: {
@@ -33,22 +59,6 @@ export default {
           ...DAV_HEADERS,
         },
       }));
-    }
-
-    // Panel entry points are served explicitly and never redirect. With
-    // html_handling = "none" the asset pipeline returns /panel/index.html
-    // directly, so /panel, /panel/ and /panel/index.html all yield 200 HTML.
-    if (url.pathname === "/panel" || url.pathname === "/panel/" || url.pathname === "/panel/index.html") {
-      if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
-      const assetUrl = new URL("/panel/index.html", request.url);
-      return finalize(await env.ASSETS.fetch(new Request(assetUrl, request)));
-    }
-    if (url.pathname.startsWith("/panel/api/")) {
-      return finalize(await handlePanelApi(request, env));
-    }
-    if (url.pathname.startsWith("/panel/")) {
-      if (!env.ASSETS) return finalize(textResponse("Management panel assets are not configured.", 503));
-      return finalize(await env.ASSETS.fetch(request));
     }
 
     let key;
@@ -504,11 +514,82 @@ function panelPathToKey(value) {
   return segments.join("/");
 }
 
-function jsonResponse(value, status = 200) {
+function jsonResponse(value, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders },
   });
+}
+
+// ---------------------------------------------------------------
+// Panel session: the login view exchanges Basic credentials for a
+// short-lived, HMAC-signed HttpOnly cookie. Media previews and download
+// links are plain same-origin URLs and cannot attach Authorization
+// headers, so a cookie is required for the panel to be fully usable.
+// The signing key is WEBDAV_PASSWORD itself: changing the password
+// invalidates every outstanding session, exactly like share links.
+// ---------------------------------------------------------------
+const SESSION_COOKIE = "r2dav_session";
+const SESSION_TTL = 86400;
+
+async function handlePanelSession(request, env) {
+  const method = request.method.toUpperCase();
+  const url = new URL(request.url);
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  const cookieAttributes = `Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL}${secure}`;
+
+  if (method === "POST") {
+    if (!basicAuthValid(request, env)) {
+      // No WWW-Authenticate here on purpose: a fetch() from the login view
+      // must surface the error inline instead of raising a browser dialog.
+      return jsonResponse({ error: "用户名或密码错误。" }, 401);
+    }
+    const exp = Math.floor(Date.now() / 1000) + SESSION_TTL;
+    const payload = base64UrlEncode(JSON.stringify({ u: env.WEBDAV_USERNAME, exp }));
+    const token = `${payload}.${await signSharePayload(payload, env.WEBDAV_PASSWORD)}`;
+    return jsonResponse({ ok: true, username: env.WEBDAV_USERNAME }, 200, {
+      "Set-Cookie": `${SESSION_COOKIE}=${token}; ${cookieAttributes}`,
+    });
+  }
+
+  if (method === "GET") {
+    const data = await verifySessionToken(readCookie(request, SESSION_COOKIE), env);
+    if (!data) return jsonResponse({ error: "No active session." }, 401);
+    return jsonResponse({ ok: true, username: data.u });
+  }
+
+  if (method === "DELETE") {
+    return jsonResponse({ ok: true }, 200, {
+      "Set-Cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
+    });
+  }
+
+  return jsonResponse({ error: "Method not allowed." }, 405);
+}
+
+async function verifySessionToken(token, env) {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const expected = await signSharePayload(parts[0], env.WEBDAV_PASSWORD);
+  if (!constantTimeEqual(expected, parts[1])) return null;
+  try {
+    const data = JSON.parse(base64UrlDecode(parts[0]));
+    if (!data || data.u !== env.WEBDAV_USERNAME || !Number.isSafeInteger(data.exp) || data.exp < Math.floor(Date.now() / 1000)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function readCookie(request, name) {
+  const header = request.headers.get("Cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator > 0 && part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim();
+  }
+  return null;
 }
 
 function finalize(response) {
@@ -530,7 +611,7 @@ function textResponse(body, status, additionalHeaders = {}) {
   });
 }
 
-function isAuthorized(request, env) {
+function basicAuthValid(request, env) {
   const header = request.headers.get("Authorization");
   if (!header || !header.startsWith("Basic ")) return false;
 
@@ -548,6 +629,13 @@ function isAuthorized(request, env) {
   } catch {
     return false;
   }
+}
+
+// WebDAV and the panel API accept either HTTP Basic credentials or a valid
+// panel session cookie.
+async function isAuthorized(request, env) {
+  if (basicAuthValid(request, env)) return true;
+  return Boolean(await verifySessionToken(readCookie(request, SESSION_COOKIE), env));
 }
 
 function constantTimeEqual(a, b) {

@@ -1,5 +1,6 @@
 import worker from "../src/worker.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const encoder = new TextEncoder();
@@ -143,14 +144,22 @@ async function toBytes(value) {
 
 // Mimics the production Workers Static Assets pipeline with
 // html_handling = "none": exact file paths return 200 directly, everything
-// else 404, and no canonicalization redirects are ever produced.
+// else 404, and no canonicalization redirects are ever produced. The asset
+// list is enumerated from public/panel so newly added modules are covered.
 class PanelAssets {
   constructor() {
-    const types = { "index.html": "text/html; charset=utf-8", "style.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8" };
+    const types = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
     this.files = new Map();
-    for (const [name, type] of Object.entries(types)) {
-      this.files.set(`/panel/${name}`, { body: readFileSync(PANEL_DIR + name, "utf8"), type });
-    }
+    const walk = (directory, prefix) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) walk(join(directory, entry.name), prefix + entry.name + "/");
+        else {
+          const type = types[extname(entry.name).toLowerCase()] || "application/octet-stream";
+          this.files.set(`/panel/${prefix}${entry.name}`, { body: readFileSync(join(directory, entry.name)), type });
+        }
+      }
+    };
+    walk(PANEL_DIR, "");
   }
 
   async fetch(request) {
@@ -210,10 +219,12 @@ async function run() {
 
   // ============================================================
   // Panel entry points — regression for ERR_TOO_MANY_REDIRECTS.
-  // /panel, /panel/ and /panel/index.html must all answer 200 with the
-  // panel HTML, without any Location redirect, when authenticated.
+  // The shell is public (it carries no data): /panel, /panel/ and
+  // /panel/index.html must answer 200 with identical HTML and no redirect,
+  // for anonymous and authenticated requests alike. The API stays 401 for
+  // anonymous callers.
   // ============================================================
-  const panelHtml = env.ASSETS.files.get("/panel/index.html").body;
+  const panelHtml = env.ASSETS.files.get("/panel/index.html").body.toString("utf8");
   for (const entry of ["/panel", "/panel/", "/panel/index.html"]) {
     const response = await dav("GET", entry);
     await expectStatus(response, 200, `panel entry ${entry}`);
@@ -221,23 +232,78 @@ async function run() {
     ok((response.headers.get("Content-Type") || "").includes("text/html"), `panel entry ${entry} content type`);
     ok(response.headers.get("Cache-Control") === "no-store", `panel entry ${entry} no-store`);
     ok((await response.text()) === panelHtml, `panel entry ${entry} serves the real panel HTML`);
+    const anonymous = await dav("GET", entry, { authenticated: false });
+    await expectStatus(anonymous, 200, `anonymous panel entry ${entry}`);
+    ok(!anonymous.headers.has("Location"), `anonymous panel entry ${entry} must not redirect`);
   }
 
-  for (const entry of ["/panel", "/panel/", "/panel/index.html"]) {
-    const response = await dav("GET", entry, { authenticated: false });
-    await expectStatus(response, 401, `anonymous panel entry ${entry}`);
-    ok((response.headers.get("WWW-Authenticate") || "").includes("Basic"), `anonymous panel entry ${entry} challenges Basic Auth`);
+  for (const assetPath of env.ASSETS.files.keys()) {
+    const response = await dav("GET", assetPath, { authenticated: false });
+    await expectStatus(response, 200, `anonymous panel asset ${assetPath}`);
+    ok(!(response.headers.get("Content-Type") || "").includes("octet-stream"), `panel asset ${assetPath} has a real content type`);
   }
 
-  let response = await dav("GET", "/panel/style.css");
+  let response = await dav("GET", "/panel/api/health", { authenticated: false });
+  await expectStatus(response, 401, "anonymous panel API rejection");
+  ok((response.headers.get("WWW-Authenticate") || "").includes("Basic"), "anonymous panel API challenges Basic Auth");
+  ok((await response.json()).error === "Authentication required.", "anonymous panel API returns JSON error");
+
+  response = await dav("GET", "/panel/style.css");
   await expectStatus(response, 200, "panel stylesheet");
   ok((response.headers.get("Content-Type") || "").includes("text/css"), "panel stylesheet content type");
-  ok((await response.text()) === env.ASSETS.files.get("/panel/style.css").body, "panel stylesheet body");
+  ok((await response.text()) === env.ASSETS.files.get("/panel/style.css").body.toString("utf8"), "panel stylesheet body");
 
   response = await dav("GET", "/panel/app.js");
   await expectStatus(response, 200, "panel script");
   ok((response.headers.get("Content-Type") || "").includes("javascript"), "panel script content type");
-  ok((await response.text()).includes("/panel/api/"), "panel script body");
+  ok((await response.text()).includes("./js/api.js"), "panel entry imports the api module");
+
+  response = await dav("GET", "/panel/js/api.js");
+  await expectStatus(response, 200, "panel api module");
+  ok((await response.text()).includes("/panel/api"), "panel api module targets the panel API base");
+
+  // ============================================================
+  // Panel session: login exchanges Basic credentials for an HMAC-signed
+  // HttpOnly cookie; the cookie alone then authenticates panel API calls.
+  // ============================================================
+  response = await dav("POST", "/panel/api/session", { authenticated: false, headers: { Authorization: authorization } });
+  await expectStatus(response, 200, "session login with valid credentials");
+  const setCookie = response.headers.get("Set-Cookie") || "";
+  ok(setCookie.includes("r2dav_session="), "login sets the session cookie");
+  ok(setCookie.includes("HttpOnly"), "session cookie is HttpOnly");
+  ok(setCookie.includes("SameSite=Strict"), "session cookie is SameSite=Strict");
+  const sessionCookie = setCookie.split(";")[0];
+
+  response = await dav("GET", "/panel/api/config", { authenticated: false, headers: { Cookie: sessionCookie } });
+  await expectStatus(response, 200, "session cookie authenticates panel API");
+  ok((await response.json()).username === env.WEBDAV_USERNAME, "session cookie resolves the username");
+
+  response = await dav("POST", "/panel/api/session", { authenticated: false, headers: { Authorization: `Basic ${Buffer.from("backup-user:wrong-password").toString("base64")}` } });
+  await expectStatus(response, 401, "session login rejects wrong credentials");
+  ok(!response.headers.has("Set-Cookie"), "failed login sets no cookie");
+  ok((await response.json()).error.includes("密码"), "failed login returns a friendly JSON error");
+
+  const tamperedCookie = sessionCookie.split("=")[0] + "=tampered.payload.sig";
+  response = await dav("GET", "/panel/api/config", { authenticated: false, headers: { Cookie: tamperedCookie } });
+  await expectStatus(response, 401, "tampered session cookie rejected");
+
+  response = await dav("DELETE", "/panel/api/session", { authenticated: false, headers: { Cookie: sessionCookie } });
+  await expectStatus(response, 200, "session logout");
+  ok((response.headers.get("Set-Cookie") || "").includes("Max-Age=0"), "logout clears the session cookie");
+
+  // Plain HTTP must redirect to HTTPS except on loopback (dev tooling).
+  const httpProbe = async (host, path, auth) => {
+    const requestHeaders = new Headers();
+    if (auth) requestHeaders.set("Authorization", authorization);
+    return worker.fetch(new Request(`http://${host}${path}`, { headers: requestHeaders }), env);
+  };
+  response = await httpProbe("dav.example", "/panel/api/health", true);
+  await expectStatus(response, 301, "plain HTTP redirects to HTTPS off loopback");
+  ok(response.headers.get("Location") === "https://dav.example/panel/api/health", "HTTPS redirect target");
+  response = await httpProbe("127.0.0.1", "/panel/api/health", false);
+  await expectStatus(response, 401, "loopback HTTP skips the redirect and reaches the worker");
+  response = await httpProbe("localhost", "/panel", false);
+  await expectStatus(response, 200, "loopback HTTP serves the panel shell");
 
   response = await dav("GET", "/panel/missing-asset.css");
   await expectStatus(response, 404, "missing panel asset stays 404");
