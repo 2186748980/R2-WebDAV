@@ -7,7 +7,8 @@
     "check": "node --check src/worker.js && node --check public/panel/app.js",
     "test": "node test/worker.test.mjs",
     "dev": "npx wrangler dev",
-    "deploy": "npx wrangler deploy"
+    "predeploy": "node scripts/check-secrets.mjs",
+    "deploy": "npx wrangler deploy && node scripts/verify-deployment.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

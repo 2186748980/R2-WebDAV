@@ -102,11 +102,16 @@ npx wrangler secret put WEBDAV_USERNAME
 npx wrangler secret put WEBDAV_PASSWORD
 ```
 
+> **必须使用 "Secret" 类型，不要用 "Text"。**
+> 如果在 Dashboard 的 *Variables and Secrets* 里把这两个值添加成 **Text（明文变量）**，下一次 `wrangler deploy`（包括 Git 自动部署）会把它们清掉，整个服务会变成 503 "WebDAV service is not configured."。Secret 类型会被后续每次部署自动继承，且永远不需要写进 `wrangler.toml`。
+
 ### 5. 部署
 
 ```bash
-npx wrangler deploy
+npm run deploy
 ```
+
+`npm run deploy` = 部署前检查（`scripts/check-secrets.mjs`，缺少任一 Secret 直接终止部署并给出修复指引）→ `npx wrangler deploy` → 部署后验证（`scripts/verify-deployment.mjs`，确认线上认证门生效、`/panel` 无重定向）。
 
 部署成功后，Wrangler 会给你一个类似这样的地址：
 
@@ -165,6 +170,15 @@ https://your-webdav-worker.your-subdomain.workers.dev/
 npm run check
 npm test
 ```
+
+部署链路上的两个检查脚本也可以单独运行（需要能访问 Cloudflare API / workers.dev 的网络）：
+
+```bash
+node scripts/check-secrets.mjs                                  # 检查两个 Secret 是否以 Secret 类型存在
+node scripts/verify-deployment.mjs https://r2-webdav.2186.workers.dev --wait 300   # 部署后验证线上
+```
+
+GitHub Actions 在每次 push 后也会自动运行同样的线上验证（`verify-deployment` job）：线上出现 503 未配置、认证门失效或 `/panel` 重定向时，该 job 会明确失败。
 
 测试覆盖：管理面板三个入口（`/panel`、`/panel/`、`/panel/index.html`，认证后必须 200 且无重定向）、面板全部 API（config/list/file/download/upload/multipart/action/stats/health/search/share）、WebDAV 全方法（OPTIONS、PROPFIND、GET、HEAD、PUT、DELETE、MKCOL、COPY、MOVE）、Range 请求、ETag 条件请求、中文/空格/% 文件名、路径穿越防护、分享链接签名与过期。
 

@@ -201,6 +201,13 @@ function ok(condition, label) {
 }
 
 async function run() {
+  // Repository hygiene: credentials must only ever live in Worker Secrets.
+  // A dashboard "Text" (plain) variable or a wrangler.toml assignment would
+  // either leak the value into the repo or get wiped by the next deploy.
+  const wranglerConfig = readFileSync(fileURLToPath(new URL("../wrangler.toml", import.meta.url)), "utf8");
+  ok(!/^\s*\[vars\]/m.test(wranglerConfig), "wrangler.toml must not define a [vars] section");
+  ok(!/^\s*(WEBDAV_USERNAME|WEBDAV_PASSWORD)\s*=/m.test(wranglerConfig), "wrangler.toml must not assign credential values");
+
   // ============================================================
   // Panel entry points — regression for ERR_TOO_MANY_REDIRECTS.
   // /panel, /panel/ and /panel/index.html must all answer 200 with the

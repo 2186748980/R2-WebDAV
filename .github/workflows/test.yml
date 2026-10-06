@@ -16,3 +16,16 @@ jobs:
       - run: npm install
       - run: npm test
       - run: npm run check
+
+  # Fails while the live worker runs a version without its secrets (503)
+  # or if /panel ever starts redirecting again. Rides out deploy
+  # propagation after the same push.
+  verify-deployment:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/verify-deployment.mjs https://r2-webdav.2186.workers.dev --wait 300
