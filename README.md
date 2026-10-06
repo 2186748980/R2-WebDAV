@@ -287,3 +287,17 @@ For stronger disaster recovery, keep an independent R2 backup or lifecycle/versi
 ### Cloudflare Static Assets
 
 The Worker serves `public/panel/` as Workers Static Assets while `run_worker_first` protects the panel and panel API with the existing Basic Auth. The WebDAV root path remains `/` for compatibility with existing clients.
+
+## 部署架构（唯一生产部署链路）
+
+```text
+git push main
+  → Cloudflare Workers Builds（GitHub 集成，script_tag 8cabe4d7…）
+  → 构建容器执行 npm run deploy：
+      1. predeploy: scripts/check-secrets.mjs   ← 缺 Secret 直接终止，不产生新版本
+      2. npx wrangler deploy
+      3. scripts/verify-deployment.mjs          ← 线上 401/503/重定向验证，失败即构建失败
+  → GitHub Actions verify-deployment job 独立复查线上（5 分钟轮询）
+```
+
+生产部署命令配置在 Cloudflare Workers Builds 中为 `npm run deploy`（2026-10-06 由裸 `npx wrangler deploy` 收紧，裸命令曾导致无门禁的自动部署）；PR 预览构建已关闭。手动部署走同一条管线：`npm run deploy`。
