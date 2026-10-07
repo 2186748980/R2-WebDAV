@@ -13,6 +13,7 @@ const state = {
   cursor: null,
   filter: "",
   sort: "name",
+  sortDir: 1,
   view: localStorage.getItem("r2dav.view") || "list",
   global: false,
   loading: false,
@@ -20,6 +21,8 @@ const state = {
   selected: new Set(),
   active: false,
 };
+
+const SORT_DEFAULT_DIR = { name: 1, size: -1, date: -1 };
 
 const nodes = {};
 
@@ -51,6 +54,7 @@ export function initFiles() {
   document.getElementById("sortSelect").value = state.sort;
   document.getElementById("sortSelect").addEventListener("change", (event) => {
     state.sort = event.target.value;
+    state.sortDir = SORT_DEFAULT_DIR[state.sort];
     render();
   });
 
@@ -66,8 +70,12 @@ export function initFiles() {
   nodes.head.addEventListener("click", (event) => {
     const column = event.target.closest("[data-sort]");
     if (!column) return;
-    state.sort = column.dataset.sort;
-    document.getElementById("sortSelect").value = state.sort;
+    if (state.sort === column.dataset.sort) state.sortDir *= -1;
+    else {
+      state.sort = column.dataset.sort;
+      state.sortDir = SORT_DEFAULT_DIR[state.sort];
+      document.getElementById("sortSelect").value = state.sort;
+    }
     render();
   });
 
@@ -121,6 +129,8 @@ async function openPath(path, { reset = true } = {}) {
     state.loading = true;
     state.error = null;
     render();
+  } else {
+    nodes.loadMore.disabled = true;
   }
 
   try {
@@ -136,16 +146,22 @@ async function openPath(path, { reset = true } = {}) {
     if (error.isAuth) return; // global handler takes over
     state.error = error.message;
     render();
+  } finally {
+    nodes.loadMore.disabled = false;
   }
 }
 
 function visibleItems() {
   const needle = state.filter.toLowerCase();
   const filtered = needle ? state.items.filter((item) => item.name.toLowerCase().includes(needle)) : [...state.items];
-  const direction = { name: (a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }), size: (a, b) => (b.size || 0) - (a.size || 0), date: (a, b) => new Date(b.uploaded || 0) - new Date(a.uploaded || 0) }[state.sort];
+  const base = {
+    name: (a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }),
+    size: (a, b) => (a.size || 0) - (b.size || 0),
+    date: (a, b) => new Date(a.uploaded || 0) - new Date(b.uploaded || 0),
+  }[state.sort];
   return filtered.sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-    return direction(a, b);
+    return base(a, b) * state.sortDir;
   });
 }
 
@@ -154,6 +170,9 @@ function render() {
     button.classList.toggle("active", button.dataset.mode === state.view);
   });
   renderBreadcrumb();
+  document.getElementById("itemSummary").textContent = state.loading
+    ? ""
+    : `已加载 ${state.items.length} 项${state.cursor ? "（还有更多）" : ""}${state.global ? " · 全局搜索" : ""}`;
   nodes.list.className = "file-list " + state.view;
   nodes.list.innerHTML = "";
   renderHead();
@@ -199,7 +218,9 @@ function render() {
 function renderHead() {
   nodes.head.classList.toggle("hidden", state.view !== "list" || (!state.loading && state.items.length === 0 && !state.error));
   nodes.head.querySelectorAll("[data-sort]").forEach((column) => {
-    column.classList.toggle("sorted", column.dataset.sort === state.sort);
+    const sorted = column.dataset.sort === state.sort;
+    column.classList.toggle("sorted", sorted);
+    column.querySelector(".sort-ind").textContent = sorted ? (state.sortDir === 1 ? "↑" : "↓") : "";
   });
 }
 
@@ -235,6 +256,7 @@ function buildRow(item) {
 
   const check = el("input");
   check.type = "checkbox";
+  check.setAttribute("aria-label", "选择 " + item.name);
   check.checked = state.selected.has(item.path);
   check.addEventListener("click", (event) => event.stopPropagation());
   check.addEventListener("change", () => {
@@ -445,6 +467,10 @@ async function deleteItem(item) {
   toast("已删除", "ok");
 }
 
+function setBatchBarBusy(busy) {
+  nodes.batch.querySelectorAll(".btn").forEach((button) => { button.disabled = busy; });
+}
+
 async function batchDelete() {
   if (!state.selected.size) return;
   const count = state.selected.size;
@@ -452,18 +478,27 @@ async function batchDelete() {
     title: "删除 " + count + " 项",
     message: count + " 个文件/文件夹（含内部内容）将被立即删除，此操作不可恢复。",
     confirmLabel: "全部删除",
-    confirmAsync: async () => {
-      let failed = 0;
-      for (const path of [...state.selected]) {
-        try {
-          await api.action({ action: "delete", source: path });
-          state.selected.delete(path);
-        } catch {
-          failed += 1;
+    confirmAsync: async (report) => {
+      setBatchBarBusy(true);
+      try {
+        const paths = [...state.selected];
+        let failed = 0;
+        let index = 0;
+        for (const path of paths) {
+          index += 1;
+          report(`处理中 ${index}/${paths.length}`);
+          try {
+            await api.action({ action: "delete", source: path });
+            state.selected.delete(path);
+          } catch {
+            failed += 1;
+          }
         }
+        if (failed) throw new ApiError(`${failed} 项删除失败，其余已完成`, 0);
+        await openPath(state.path);
+      } finally {
+        setBatchBarBusy(false);
       }
-      if (failed) throw new ApiError(`${failed} 项删除失败，其余已完成`, 0);
-      await openPath(state.path);
     },
   });
   if (!confirmed) return;
@@ -478,20 +513,29 @@ async function batchTransfer(action) {
     placeholder: "例如 backups/photos，留空表示根目录",
     submitLabel: action === "copy" ? "复制" : "移动",
     validate: (value) => value.split("/").filter(Boolean).some((segment) => segment === "." || segment === ".." || segment.includes("\\")) ? "路径不能包含 . .. 或 \\" : null,
-    submitAsync: async (value) => {
-      const prefix = value ? value.replace(/^\/+|\/+$/g, "") + "/" : "";
-      let failed = 0;
-      for (const path of [...state.selected]) {
-        const name = path.split("/").pop();
-        try {
-          await api.action({ action, source: path, destination: prefix + name });
-          state.selected.delete(path);
-        } catch {
-          failed += 1;
+    submitAsync: async (value, report) => {
+      setBatchBarBusy(true);
+      try {
+        const prefix = value ? value.replace(/^\/+|\/+$/g, "") + "/" : "";
+        const paths = [...state.selected];
+        let failed = 0;
+        let index = 0;
+        for (const path of paths) {
+          index += 1;
+          report(`处理中 ${index}/${paths.length}`);
+          const name = path.split("/").pop();
+          try {
+            await api.action({ action, source: path, destination: prefix + name });
+            state.selected.delete(path);
+          } catch {
+            failed += 1;
+          }
         }
+        if (failed) throw new ApiError(`${failed} 项失败，其余已完成`, 0);
+        await openPath(state.path);
+      } finally {
+        setBatchBarBusy(false);
       }
-      if (failed) throw new ApiError(`${failed} 项失败，其余已完成`, 0);
-      await openPath(state.path);
     },
   });
   if (destinationRoot === null) return;
@@ -573,12 +617,22 @@ async function previewItem(item) {
   loading.innerHTML = '<span class="spinner"></span>';
   body.append(loading);
 
+  // iPads report as Macintosh with touch; iPhones/iPads cannot render PDF
+  // inside an iframe, so offer a download instead of a blank viewer.
+  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
   try {
     if (image) {
       body.innerHTML = "";
       const imageNode = el("img", "preview-media");
-      imageNode.src = url;
       imageNode.alt = item.name;
+      imageNode.onerror = () => {
+        body.innerHTML = "";
+        // The dialog footer already carries the download action; keep the
+        // body to a single friendly explanation.
+        body.append(el("p", "confirm-message", "图片加载失败：文件可能已被删除、改名或损坏，可尝试下载后查看。"));
+      };
+      imageNode.src = url;
       body.append(imageNode);
     } else if (video) {
       body.innerHTML = "";
@@ -594,10 +648,16 @@ async function previewItem(item) {
       audioNode.controls = true;
       body.append(audioNode);
     } else if (extension === "pdf") {
-      body.innerHTML = "";
-      const frame = el("iframe", "preview-frame");
-      frame.src = url;
-      body.append(frame);
+      if (isIOS) {
+        body.innerHTML = "";
+        body.append(el("p", "confirm-message", "iOS 浏览器不支持在页面内预览 PDF，请点击下方“下载”后查看。"));
+      } else {
+        body.innerHTML = "";
+        const frame = el("iframe", "preview-frame");
+        frame.src = url;
+        frame.title = item.name;
+        body.append(frame);
+      }
     } else if (isTextType(item.name)) {
       if (item.size > 2 * 1024 * 1024) {
         body.innerHTML = "";
@@ -628,11 +688,10 @@ async function showDetails(item) {
     build: (container) => {
       const rows = [
         ["名称", item.name],
-        ["类型", item.type === "directory" ? "文件夹" : (item.contentType || "未知")],
+        ["类型", item.type === "directory" ? "文件夹" : "文件"],
         ["位置", "/" + (item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "")],
         ["大小", item.type === "directory" ? "—" : fmtSize(item.size)],
         ["修改时间", fmtDate(item.uploaded)],
-        ["ETag", item.etag || "—"],
       ];
       for (const [key, value] of rows) {
         const row = el("div", "kv");
@@ -642,6 +701,17 @@ async function showDetails(item) {
         row.append(code);
         container.append(row);
       }
+      // Raw object metadata only matters when debugging; keep it collapsed.
+      const advanced = el("details", "adv-details");
+      advanced.append(el("summary", null, "高级信息"));
+      const contentType = el("div", "kv");
+      contentType.append(el("span", null, "Content-Type"));
+      contentType.append(el("code", null, item.contentType || "未知"));
+      const etag = el("div", "kv");
+      etag.append(el("span", null, "ETag"));
+      etag.append(el("code", null, item.etag || "—"));
+      advanced.append(contentType, etag);
+      container.append(advanced);
     },
     actions: item.type === "file"
       ? [{ label: "下载", kind: "primary", onClick: () => { location.href = api.downloadUrl(item.path); } }]

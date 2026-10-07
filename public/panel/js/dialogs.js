@@ -10,6 +10,9 @@ let active = null;
 export function showModal({ title, build, actions = [], danger = false, onClose, ready }) {
   closeModal();
   const box = el("div", "modal-box" + (danger ? " danger" : ""));
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  box.setAttribute("aria-label", title);
   const head = el("div", "modal-head");
   head.append(el("h3", null, title));
   const closeButton = el("button", "icon-btn");
@@ -41,7 +44,7 @@ export function showModal({ title, build, actions = [], danger = false, onClose,
 
   closeButton.addEventListener("click", closeModal);
   root.onmousedown = (event) => { if (event.target === root) closeModal(); };
-  document.addEventListener("keydown", escapeHandler);
+  document.addEventListener("keydown", keyHandler);
 
   const firstField = box.querySelector("input, select, textarea, button.primary");
   if (firstField) firstField.focus();
@@ -50,8 +53,25 @@ export function showModal({ title, build, actions = [], danger = false, onClose,
   return { close: closeModal, root: box };
 }
 
-function escapeHandler(event) {
-  if (event.key === "Escape") closeModal();
+function keyHandler(event) {
+  if (!active) return;
+  if (event.key === "Escape") { closeModal(); return; }
+  // Focus trap: keep Tab cycling inside the open dialog.
+  if (event.key !== "Tab") return;
+  const box = root.querySelector(".modal-box");
+  if (!box) return;
+  const focusable = [...box.querySelectorAll("button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])")]
+    .filter((node) => !node.disabled && node.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !box.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !box.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 export function closeModal() {
@@ -59,7 +79,7 @@ export function closeModal() {
   root.classList.add("hidden");
   root.innerHTML = "";
   root.onmousedown = null;
-  document.removeEventListener("keydown", escapeHandler);
+  document.removeEventListener("keydown", keyHandler);
   const handler = active.onClose;
   active = null;
   handler?.();
@@ -80,6 +100,12 @@ export function formDialog({ title, label, value = "", placeholder = "", hint, v
     };
 
     const errorLine = el("p", "form-error hidden");
+    errorLine.setAttribute("role", "alert");
+    const progressLine = el("p", "progress-line hidden");
+    const report = (text) => {
+      progressLine.textContent = text;
+      progressLine.classList.remove("hidden");
+    };
     const input = el("input", "input");
     input.value = value;
     input.placeholder = placeholder;
@@ -112,7 +138,7 @@ export function formDialog({ title, label, value = "", placeholder = "", hint, v
       busy = true;
       setModalBusy(true);
       try {
-        await submitAsync(trimmed);
+        await submitAsync(trimmed, report);
         finish(trimmed);
         closeModal();
       } catch (error) {
@@ -128,7 +154,7 @@ export function formDialog({ title, label, value = "", placeholder = "", hint, v
       title,
       danger,
       build: (container) => {
-        container.append(field, errorLine);
+        container.append(field, errorLine, progressLine);
       },
       actions: [
         { label: "取消", onClick: () => { finish(null); closeModal(); } },
@@ -165,8 +191,13 @@ export function confirmDialog({ title, message, detail, confirmLabel = "删除",
     };
 
     const errorLine = el("p", "form-error hidden");
+    errorLine.setAttribute("role", "alert");
+    const progressLine = el("p", "progress-line hidden");
+    const report = (text) => {
+      progressLine.textContent = text;
+      progressLine.classList.remove("hidden");
+    };
     let footer = null;
-    let box = null;
 
     const run = async () => {
       if (busy) return;
@@ -177,7 +208,7 @@ export function confirmDialog({ title, message, detail, confirmLabel = "删除",
         button.classList.toggle("busy", button.classList.contains("danger") || button.classList.contains("primary"));
       });
       try {
-        await confirmAsync();
+        await confirmAsync(report);
         finish(true);
         closeModal();
       } catch (error) {
@@ -194,15 +225,14 @@ export function confirmDialog({ title, message, detail, confirmLabel = "删除",
       build: (container) => {
         if (message) container.append(el("p", "confirm-message", message));
         if (detail) container.append(el("p", "field-hint", detail));
-        container.append(errorLine);
+        container.append(errorLine, progressLine);
       },
       actions: [
         { label: "取消", onClick: () => { finish(false); closeModal(); } },
         { label: confirmLabel, kind: danger ? "danger" : "primary", onClick: () => void run() },
       ],
       onClose: () => finish(false),
-      ready: (modalBox) => { box = modalBox; footer = modalBox.querySelector(".modal-foot"); },
+      ready: (modalBox) => { footer = modalBox.querySelector(".modal-foot"); },
     });
-    void box;
   });
 }

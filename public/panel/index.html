@@ -8,6 +8,21 @@
 <title>R2-WebDAV · 私有云</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ctext x='16' y='21.5' font-family='system-ui,sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3ER2%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/panel/style.css">
+<script>
+// Set the theme before first paint so dark-mode users never see a light
+// flash. The CSS media fallback only covers "system dark"; this covers an
+// explicit choice stored by app.js.
+(function () {
+  try {
+    var setting = localStorage.getItem("r2dav.theme");
+    if (setting === "light" || setting === "dark") {
+      document.documentElement.dataset.theme = setting;
+    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      document.documentElement.dataset.theme = "dark";
+    }
+  } catch (error) { /* private mode: stay on defaults */ }
+})();
+</script>
 </head>
 <body>
 
@@ -19,7 +34,12 @@
     <p class="login-sub">使用 WebDAV 账号密码登录</p>
     <form id="loginForm" novalidate>
       <label class="field"><span>用户名</span><input class="input" id="loginUser" autocomplete="username" autocapitalize="none" required></label>
-      <label class="field"><span>密码</span><input class="input" id="loginPass" type="password" autocomplete="current-password" required></label>
+      <label class="field"><span>密码</span>
+        <span class="pw-wrap">
+          <input class="input" id="loginPass" type="password" autocomplete="current-password" required>
+          <button type="button" class="icon-btn reveal-btn" id="revealPass" aria-label="显示密码" aria-pressed="false"><span data-icon="eye"></span></button>
+        </span>
+      </label>
       <p id="loginError" class="form-error hidden" role="alert"></p>
       <button class="btn primary block" type="submit" id="loginSubmit">登 录</button>
     </form>
@@ -75,12 +95,11 @@
         <div class="card">
           <div class="card-head"><h2>账号</h2><span class="badge ok">已启用</span></div>
           <div class="kv"><span>用户名</span><code id="username">—</code><button class="btn ghost sm" data-copy="username">复制</button></div>
-          <div class="kv"><span>密码</span><code>••••••••</code><span class="badge">仅存于 Worker Secret</span></div>
           <div class="kv"><span>R2 存储</span><span id="r2Status">检查中…</span></div>
         </div>
         <div class="card">
           <div class="card-head"><h2>安全</h2><span class="badge ok">Private</span></div>
-          <p class="muted">面板登录与 WebDAV 使用同一套账号密码。登录会话由 HttpOnly Cookie 承载；临时分享链接由密码派生签名，修改密码后旧链接与会话同时失效。</p>
+          <p class="muted">面板登录与 WebDAV 共用同一套账号密码；临时分享链接由密码派生签名，修改密码后旧链接与会话同时失效。</p>
         </div>
       </div>
     </section>
@@ -88,7 +107,10 @@
     <section id="view-files" class="view hidden">
       <div class="card list-card">
         <div class="files-toolbar">
-          <div class="crumbs" id="breadcrumb"></div>
+          <div class="crumbs-row">
+            <div id="breadcrumb" class="crumbs"></div>
+            <span id="itemSummary" class="item-summary"></span>
+          </div>
           <div class="toolbar-actions">
             <label class="search-box"><span data-icon="search"></span><input id="searchInput" placeholder="筛选当前目录，回车全局搜索"></label>
             <select id="sortSelect" class="input select-sm" title="排序">
@@ -167,7 +189,7 @@
           <button class="btn ghost sm" id="togglePasswordBtn"><span data-icon="eye"></span>显示</button>
           <button class="btn ghost sm" id="copyPasswordBtn"><span data-icon="copy"></span>复制</button>
         </div>
-        <p class="muted">密码只在当前标签页内存中保留用于显示与复制；刷新、关闭标签页或退出登录后即消失。它不会写入任何存储、URL 或日志，也不会由任何 API 返回。</p>
+        <p class="muted">密码仅保留在当前标签页内存中；刷新、退出或关闭标签页后消失。不写入任何存储、URL 或日志，也不会由 API 返回。</p>
       </div>
       <div class="card">
         <div class="card-head"><h2>服务信息</h2></div>
@@ -180,7 +202,7 @@
       </div>
       <div class="card">
         <div class="card-head"><h2>当前边界</h2></div>
-        <p class="muted">单用户模型、无回收站，删除立即生效。大文件分片上传的暂停与续传在当前页面生命周期内有效，刷新页面后不会自动恢复。如需更强容灾，请在 R2 侧另做备份或版本化策略。</p>
+        <p class="muted">单用户模型、无回收站，删除立即生效；大文件分片的暂停与续传仅限当前页面。重要数据请在 R2 侧另做备份。</p>
       </div>
     </section>
 

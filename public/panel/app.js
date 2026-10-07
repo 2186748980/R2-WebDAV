@@ -82,11 +82,22 @@ onUnauthorized(() => {
   showLogin("会话已失效，请重新登录");
 });
 
+// Login password reveal — same pattern as the credentials card.
+const loginPassInput = document.getElementById("loginPass");
+const revealButton = document.getElementById("revealPass");
+revealButton.addEventListener("click", () => {
+  const reveal = loginPassInput.type === "password";
+  loginPassInput.type = reveal ? "text" : "password";
+  revealButton.setAttribute("aria-pressed", String(reveal));
+  revealButton.setAttribute("aria-label", reveal ? "隐藏密码" : "显示密码");
+  revealButton.innerHTML = icon(reveal ? "eye-off" : "eye", 18);
+});
+
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (booting) return;
   const username = document.getElementById("loginUser").value.trim();
-  const password = document.getElementById("loginPass").value;
+  const password = loginPassInput.value;
   const error = document.getElementById("loginError");
   const submit = document.getElementById("loginSubmit");
   if (!username || !password) {
@@ -101,7 +112,11 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
     rememberPassword(password);
     markSession();
     error.classList.add("hidden");
-    document.getElementById("loginPass").value = "";
+    loginPassInput.value = "";
+    loginPassInput.type = "password";
+    revealButton.setAttribute("aria-pressed", "false");
+    revealButton.setAttribute("aria-label", "显示密码");
+    revealButton.innerHTML = icon("eye", 18);
     await enterApp();
   } catch (err) {
     error.textContent = err.status === 401 ? "用户名或密码错误" : (err.message || "登录失败");

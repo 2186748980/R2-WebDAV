@@ -6,7 +6,7 @@
 import { api, ApiError, friendlyMessage } from "./api.js";
 import { icon, iconForName } from "./icons.js";
 import { el, fmtSize, toast } from "./ui.js";
-import { showModal } from "./dialogs.js";
+import { showModal, closeModal } from "./dialogs.js";
 
 const PART_SIZE = 10 * 1024 * 1024;
 const MULTIPART_THRESHOLD = 20 * 1024 * 1024;
@@ -15,6 +15,7 @@ const MAX_ATTEMPTS = 3;
 const uploads = new Map();
 let trayList = null;
 let trayBadge = null;
+let collapseTimer = null;
 let getCurrentPath = () => "";
 let getExistingNames = () => [];
 let onUploadDone = null;
@@ -342,9 +343,16 @@ function removeRecord(record) {
 
 function updateBadge() {
   if (!trayBadge) return;
-  const active = [...uploads.values()].filter((item) => ["uploading", "paused", "retrying"].includes(item.status)).length;
+  const items = [...uploads.values()];
+  const active = items.filter((item) => ["uploading", "paused", "retrying"].includes(item.status)).length;
   trayBadge.textContent = String(active);
   trayBadge.classList.toggle("hidden", active === 0);
+  // Auto-collapse once everything finished cleanly; keep the tray open when
+  // anything failed or was cancelled so the retry/removal buttons stay visible.
+  clearTimeout(collapseTimer);
+  if (active === 0 && items.length && items.every((item) => item.status === "done")) {
+    collapseTimer = setTimeout(() => toggleTray(false), 2500);
+  }
 }
 
 function wireDragAndDrop() {
