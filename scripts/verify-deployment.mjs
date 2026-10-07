@@ -52,10 +52,18 @@ async function checkOnce() {
     } else {
       problems.push(`GET /panel -> unexpected 503: ${body.slice(0, 120)}`);
     }
-  } else if (panel.status !== 401) {
-    problems.push(`GET /panel -> HTTP ${panel.status}${location ? ` with Location: ${location}` : ""}; expected 401 (unauthenticated). A 3xx here is the ERR_TOO_MANY_REDIRECTS regression.`);
-  } else if (location) {
-    problems.push(`GET /panel -> 401 but with a Location header (${location}); redirect responses on /panel are forbidden.`);
+  } else if (panel.status !== 200) {
+    problems.push(`GET /panel -> HTTP ${panel.status}${location ? ` with Location: ${location}` : ""}; expected 200 (public shell). A 3xx here is the ERR_TOO_MANY_REDIRECTS regression.`);
+  } else {
+    if (location) problems.push(`GET /panel -> 200 but with a Location header (${location}); redirect responses on /panel are forbidden.`);
+    if (!(panel.headers.get("content-type") || "").includes("text/html")) {
+      problems.push("GET /panel -> 200 but not text/html; the login shell is not being served.");
+    }
+    // The API must stay authenticated even though the shell is public.
+    const apiProbe = await fetch(base + "/panel/api/health", { redirect: "manual", headers: { "User-Agent": "r2-webdav-deploy-check" } });
+    if (apiProbe.status !== 401 || !(apiProbe.headers.get("www-authenticate") || "").includes("Basic")) {
+      problems.push(`GET /panel/api/health unauthenticated -> HTTP ${apiProbe.status}; expected 401 with a Basic challenge (auth gate lost).`);
+    }
   }
   return problems;
 }
