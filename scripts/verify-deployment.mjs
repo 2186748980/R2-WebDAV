@@ -80,4 +80,4 @@ if (problems.length > 0) {
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
 }
-console.log(`Deployment verification passed for ${base}: auth gate active, /panel answers 401 without redirects.`);
+console.log(`Deployment verification passed for ${base}: auth gate active, /panel serves the public shell without redirects, API requires Basic auth.`);
