@@ -5,7 +5,7 @@
 import { api, ApiError, hasSession, markSession, clearSession, onUnauthorized, rememberPassword, forgetPassword, getRememberedPassword } from "./js/api.js";
 import { icon } from "./js/icons.js";
 import { toast, copyText, fmtSize } from "./js/ui.js";
-import { initFiles, currentPath, isActive, refreshIfCurrent, setActive } from "./js/files.js";
+import { initFiles, currentPath, currentDirItemNames, isActive, refreshIfCurrent, setActive } from "./js/files.js";
 import { initUploads } from "./js/uploads.js";
 
 // ---- Icon hydration for static markup -------------------------------------
@@ -297,6 +297,7 @@ async function enterApp() {
     initFiles();
     initUploads({
       currentPathProvider: currentPath,
+      existingNamesProvider: currentDirItemNames,
       onDone: () => { if (location.hash.slice(1) === "files" || isActive()) void refreshIfCurrent(); },
     });
   }

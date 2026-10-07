@@ -100,8 +100,8 @@
               <button data-mode="list" title="列表视图" aria-label="列表视图"><span data-icon="list"></span></button>
               <button data-mode="grid" title="网格视图" aria-label="网格视图"><span data-icon="grid"></span></button>
             </div>
-            <button class="btn ghost" id="newFolderBtn"><span data-icon="folder-plus"></span>文件夹</button>
-            <button class="btn primary" id="uploadBtn"><span data-icon="upload"></span>上传</button>
+            <button class="btn ghost" id="newFolderBtn"><span data-icon="folder-plus"></span><span class="btn-label">文件夹</span></button>
+            <button class="btn primary" id="uploadBtn"><span data-icon="upload"></span><span class="btn-label">上传</span></button>
           </div>
         </div>
         <div id="globalHint" class="global-hint hidden"></div>
@@ -116,6 +116,7 @@
         </div>
         <div class="list-head" id="listHead">
           <label class="cell-check head-check"><input type="checkbox" id="selectAll" title="全选"></label>
+          <span class="col-spacer" aria-hidden="true"></span>
           <button class="col col-name" data-sort="name">名称<span class="sort-ind"></span></button>
           <button class="col col-size" data-sort="size">大小<span class="sort-ind"></span></button>
           <button class="col col-date" data-sort="date">修改时间<span class="sort-ind"></span></button>

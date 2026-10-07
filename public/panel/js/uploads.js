@@ -3,9 +3,10 @@
 // multipart in 10 MiB parts; pause/resume takes effect between parts and
 // between attempts (an in-flight part cannot be paused mid-stream).
 
-import { api, ApiError } from "./api.js";
+import { api, ApiError, friendlyMessage } from "./api.js";
 import { icon, iconForName } from "./icons.js";
 import { el, fmtSize, toast } from "./ui.js";
+import { showModal } from "./dialogs.js";
 
 const PART_SIZE = 10 * 1024 * 1024;
 const MULTIPART_THRESHOLD = 20 * 1024 * 1024;
@@ -15,10 +16,12 @@ const uploads = new Map();
 let trayList = null;
 let trayBadge = null;
 let getCurrentPath = () => "";
+let getExistingNames = () => [];
 let onUploadDone = null;
 
-export function initUploads({ currentPathProvider, onDone }) {
+export function initUploads({ currentPathProvider, existingNamesProvider, onDone }) {
   getCurrentPath = currentPathProvider;
+  getExistingNames = existingNamesProvider || getExistingNames;
   onUploadDone = onDone;
 
   trayList = document.getElementById("trayList");
@@ -50,10 +53,65 @@ export function enqueueFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
   const directory = getCurrentPath();
+
+  // Overwrite guard: compare against the current directory listing. The
+  // backend PUT silently replaces objects, so duplicates must be surfaced
+  // before anything starts.
+  const existing = new Set(getExistingNames());
+  const duplicates = files.filter((file) => existing.has(file.name));
+  if (!duplicates.length) {
+    startAll(files, directory);
+    return;
+  }
+
+  let decided = false;
+  showModal({
+    title: "覆盖已有文件？",
+    danger: true,
+    build: (container) => {
+      container.append(el("p", "confirm-message",
+        `当前目录已有 ${duplicates.length} 个同名文件，上传将覆盖原文件：`));
+      const list = el("ul", "dup-list");
+      duplicates.slice(0, 6).forEach((file) => list.append(el("li", null, file.name)));
+      if (duplicates.length > 6) list.append(el("li", "muted", `…以及另外 ${duplicates.length - 6} 个文件`));
+      container.append(list);
+    },
+    actions: [
+      {
+        label: "跳过已存在",
+        onClick: () => {
+          decided = true;
+          startAll(files.filter((file) => !existing.has(file.name)), directory, true);
+          closeModal();
+        },
+      },
+      {
+        label: "覆盖上传",
+        kind: "danger",
+        onClick: () => {
+          decided = true;
+          startAll(files, directory);
+          closeModal();
+        },
+      },
+    ],
+    onClose: () => {
+      if (!decided) toast("已取消上传", "info");
+    },
+  });
+}
+
+function startAll(files, directory, skippedSome = false) {
+  if (!files.length) {
+    toast("没有需要上传的新文件", "info");
+    return;
+  }
   for (const file of files) startUpload(file, directory);
   updateBadge();
   toggleTray(true);
-  if (files.length > 1) toast(`开始上传 ${files.length} 个文件到 ${directory ? "/" + directory : "根目录"}`);
+  if (files.length > 1 || skippedSome) {
+    toast(`开始上传 ${files.length} 个文件到 ${directory ? "/" + directory : "根目录"}${skippedSome ? "（已跳过同名文件）" : ""}`);
+  }
 }
 
 function startUpload(file, directory) {
@@ -334,7 +392,8 @@ function xhrUpload(url, method, body, headers, onProgress, record) {
         try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { /* non-JSON */ }
         resolve(data);
       } else {
-        reject(new ApiError("HTTP " + xhr.status, xhr.status, xhr.status === 401));
+        const statusText = { 404: "文件或文件夹不存在", 409: "操作冲突：目标已存在或状态不允许", 413: "文件过大" }[xhr.status];
+        reject(new ApiError(statusText || friendlyMessage("HTTP " + xhr.status), xhr.status, xhr.status === 401));
       }
     };
     xhr.onerror = () => { record.xhr = null; reject(new ApiError("网络错误", 0)); };

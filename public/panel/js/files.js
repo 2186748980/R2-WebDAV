@@ -89,6 +89,12 @@ export function currentPath() {
   return state.path;
 }
 
+// Names currently loaded for the open directory — used by the upload
+// overwrite guard. Best-effort: reflects the last listing, not live R2.
+export function currentDirItemNames() {
+  return state.items.map((item) => item.name);
+}
+
 export function isActive() {
   return state.active;
 }
@@ -278,6 +284,18 @@ function buildGridCard(item) {
   const meta = el("div", "grid-meta", item.type === "directory" ? "文件夹" : fmtSize(item.size));
   card.append(glyph, name, meta);
 
+  // Touch devices (iOS included) never fire contextmenu, so the card carries
+  // an explicit menu button; on desktop it appears on hover like the row kebab.
+  const kebab = el("button", "icon-btn sm grid-kebab");
+  kebab.innerHTML = icon("more", 16);
+  kebab.title = "更多操作";
+  kebab.setAttribute("aria-label", item.name + " 的操作");
+  kebab.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showMenu(event.currentTarget, item);
+  });
+  card.append(kebab);
+
   card.addEventListener("click", () => openEntry(item));
   card.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -362,16 +380,14 @@ async function createFolder() {
     placeholder: "例如：备份",
     submitLabel: "创建",
     validate: (value) => unsafePath(value) ? "名称不能为空，且不能包含 / \\ 或 .." : null,
+    submitAsync: async (value) => {
+      const path = (state.path ? state.path + "/" : "") + value;
+      await api.action({ action: "mkdir", path });
+      await openPath(state.path);
+    },
   });
   if (name === null) return;
-  const path = (state.path ? state.path + "/" : "") + name;
-  try {
-    await api.action({ action: "mkdir", path });
-    toast("文件夹已创建", "ok");
-    await openPath(state.path);
-  } catch (error) {
-    if (!error.isAuth) toast("创建失败：" + error.message, "error");
-  }
+  toast("文件夹已创建", "ok");
 }
 
 async function renameItem(item) {
@@ -381,17 +397,15 @@ async function renameItem(item) {
     value: item.name,
     submitLabel: "重命名",
     validate: (value) => unsafePath(value) ? "名称不能为空，且不能包含 / \\ 或 .." : null,
+    submitAsync: async (value) => {
+      const parent = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
+      const destination = (parent ? parent + "/" : "") + value;
+      await api.action({ action: "rename", source: item.path, destination });
+      await openPath(state.path);
+    },
   });
-  if (name === null || name === item.name) return;
-  const parent = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
-  const destination = (parent ? parent + "/" : "") + name;
-  try {
-    await api.action({ action: "rename", source: item.path, destination });
-    toast("已重命名", "ok");
-    await openPath(state.path);
-  } catch (error) {
-    if (!error.isAuth) toast("重命名失败：" + error.message, "error");
-  }
+  if (name === null) return;
+  toast("已重命名", "ok");
 }
 
 async function transferItem(item, action) {
@@ -402,18 +416,16 @@ async function transferItem(item, action) {
     hint: "可包含目标文件夹，例如 backups/" + item.name,
     submitLabel: action === "copy" ? "复制" : "移动",
     validate: (value) => unsafePath(value) ? "目标路径不能为空，且不能包含 \\ 或 .." : null,
+    submitAsync: async (value) => {
+      const parent = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
+      const destination = value.includes("/") ? value : (parent ? parent + "/" : "") + value;
+      if (destination === item.path) throw new ApiError("目标与源相同，请换一个名称", 0);
+      await api.action({ action, source: item.path, destination });
+      await openPath(state.path);
+    },
   });
   if (target === null) return;
-  const parent = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
-  const destination = target.includes("/") ? target : (parent ? parent + "/" : "") + target;
-  if (destination === item.path) { toast("目标与源相同", "error"); return; }
-  try {
-    await api.action({ action, source: item.path, destination });
-    toast(action === "copy" ? "已复制" : "已移动", "ok");
-    await openPath(state.path);
-  } catch (error) {
-    if (!error.isAuth) toast((action === "copy" ? "复制失败：" : "移动失败：") + error.message, "error");
-  }
+  toast(action === "copy" ? "已复制" : "已移动", "ok");
 }
 
 async function deleteItem(item) {
@@ -423,16 +435,14 @@ async function deleteItem(item) {
       ? "文件夹 “" + item.name + "” 及其内部全部内容将被立即删除，此操作不可恢复。"
       : "文件 “" + item.name + "” 将被立即删除，此操作不可恢复。",
     confirmLabel: "删除",
+    confirmAsync: async () => {
+      await api.action({ action: "delete", source: item.path });
+      state.selected.delete(item.path);
+      await openPath(state.path);
+    },
   });
   if (!confirmed) return;
-  try {
-    await api.action({ action: "delete", source: item.path });
-    state.selected.delete(item.path);
-    toast("已删除", "ok");
-    await openPath(state.path);
-  } catch (error) {
-    if (!error.isAuth) toast("删除失败：" + error.message, "error");
-  }
+  toast("已删除", "ok");
 }
 
 async function batchDelete() {
@@ -442,19 +452,22 @@ async function batchDelete() {
     title: "删除 " + count + " 项",
     message: count + " 个文件/文件夹（含内部内容）将被立即删除，此操作不可恢复。",
     confirmLabel: "全部删除",
+    confirmAsync: async () => {
+      let failed = 0;
+      for (const path of [...state.selected]) {
+        try {
+          await api.action({ action: "delete", source: path });
+          state.selected.delete(path);
+        } catch {
+          failed += 1;
+        }
+      }
+      if (failed) throw new ApiError(`${failed} 项删除失败，其余已完成`, 0);
+      await openPath(state.path);
+    },
   });
   if (!confirmed) return;
-  let failed = 0;
-  for (const path of [...state.selected]) {
-    try {
-      await api.action({ action: "delete", source: path });
-      state.selected.delete(path);
-    } catch {
-      failed += 1;
-    }
-  }
-  toast(failed ? `完成，${failed} 项删除失败` : "批量删除完成", failed ? "error" : "ok");
-  await openPath(state.path);
+  toast("批量删除完成", "ok");
 }
 
 async function batchTransfer(action) {
@@ -465,21 +478,24 @@ async function batchTransfer(action) {
     placeholder: "例如 backups/photos，留空表示根目录",
     submitLabel: action === "copy" ? "复制" : "移动",
     validate: (value) => value.split("/").filter(Boolean).some((segment) => segment === "." || segment === ".." || segment.includes("\\")) ? "路径不能包含 . .. 或 \\" : null,
+    submitAsync: async (value) => {
+      const prefix = value ? value.replace(/^\/+|\/+$/g, "") + "/" : "";
+      let failed = 0;
+      for (const path of [...state.selected]) {
+        const name = path.split("/").pop();
+        try {
+          await api.action({ action, source: path, destination: prefix + name });
+          state.selected.delete(path);
+        } catch {
+          failed += 1;
+        }
+      }
+      if (failed) throw new ApiError(`${failed} 项失败，其余已完成`, 0);
+      await openPath(state.path);
+    },
   });
   if (destinationRoot === null) return;
-  const prefix = destinationRoot ? destinationRoot.replace(/^\/+|\/+$/g, "") + "/" : "";
-  let failed = 0;
-  for (const path of [...state.selected]) {
-    const name = path.split("/").pop();
-    try {
-      await api.action({ action, source: path, destination: prefix + name });
-      state.selected.delete(path);
-    } catch {
-      failed += 1;
-    }
-  }
-  toast(failed ? `完成，${failed} 项失败` : (action === "copy" ? "批量复制完成" : "批量移动完成"), failed ? "error" : "ok");
-  await openPath(state.path);
+  toast(action === "copy" ? "批量复制完成" : "批量移动完成", "ok");
 }
 
 // ---- Row menu ----------------------------------------------------------------
@@ -663,18 +679,23 @@ async function shareItem(item) {
       {
         label: "生成链接",
         kind: "primary",
-        onClick: async () => {
+        onClick: async (close, box) => {
+          const generateButton = box.querySelector(".modal-foot .btn.primary");
+          generateButton.disabled = true;
+          generateButton.classList.add("busy");
           try {
             const data = await api.share(item.path, Number(expiryChoice));
-            const link = modal.root.querySelector(".share-result input");
-            const resultBox = modal.root.querySelector(".share-result");
+            const link = box.querySelector(".share-result input");
+            const resultBox = box.querySelector(".share-result");
             link.value = data.url;
             resultBox.classList.remove("hidden");
-            modal.root.querySelector(".modal-foot").remove();
+            box.querySelector(".modal-foot").remove();
             const note = el("p", "field-hint", "过期时间：" + fmtDate(data.expiresAt) + "。任何拿到链接的人都可以在此时间前访问该文件。");
-            modal.root.querySelector(".modal-body").append(note);
+            box.querySelector(".modal-body").append(note);
             await copyText(data.url);
           } catch (error) {
+            generateButton.disabled = false;
+            generateButton.classList.remove("busy");
             if (!error.isAuth) toast("生成失败：" + error.message, "error");
           }
         },

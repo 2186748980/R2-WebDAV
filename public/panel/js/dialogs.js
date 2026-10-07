@@ -7,7 +7,7 @@ import { icon } from "./icons.js";
 const root = document.getElementById("modal");
 let active = null;
 
-export function showModal({ title, build, actions = [], danger = false, onClose }) {
+export function showModal({ title, build, actions = [], danger = false, onClose, ready }) {
   closeModal();
   const box = el("div", "modal-box" + (danger ? " danger" : ""));
   const head = el("div", "modal-head");
@@ -45,6 +45,7 @@ export function showModal({ title, build, actions = [], danger = false, onClose 
 
   const firstField = box.querySelector("input, select, textarea, button.primary");
   if (firstField) firstField.focus();
+  ready?.(box);
 
   return { close: closeModal, root: box };
 }
@@ -66,9 +67,12 @@ export function closeModal() {
 
 // Single-field prompt with live validation. Resolves with the trimmed value
 // or null when cancelled — a drop-in replacement for window.prompt.
-export function formDialog({ title, label, value = "", placeholder = "", hint, validate, submitLabel = "确定", danger = false }) {
+// With submitAsync the dialog stays open (buttons disabled + busy spinner)
+// until the promise settles; a rejection shows the error inline for retry.
+export function formDialog({ title, label, value = "", placeholder = "", hint, validate, submitLabel = "确定", danger = false, submitAsync }) {
   return new Promise((resolve) => {
     let settled = false;
+    let busy = false;
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -99,6 +103,27 @@ export function formDialog({ title, label, value = "", placeholder = "", hint, v
 
     input.addEventListener("input", () => setError(null));
 
+    const submit = async () => {
+      if (busy) return;
+      const trimmed = input.value.trim();
+      const problem = validate ? validate(trimmed) : (trimmed ? null : "请输入内容");
+      if (problem) { setError(problem); return; }
+      if (!submitAsync) { finish(trimmed); closeModal(); return; }
+      busy = true;
+      setModalBusy(true);
+      try {
+        await submitAsync(trimmed);
+        finish(trimmed);
+        closeModal();
+      } catch (error) {
+        busy = false;
+        setModalBusy(false);
+        setError(error.message || "操作失败，请重试");
+        input.focus();
+      }
+    };
+
+    let footer = null;
     showModal({
       title,
       danger,
@@ -107,42 +132,60 @@ export function formDialog({ title, label, value = "", placeholder = "", hint, v
       },
       actions: [
         { label: "取消", onClick: () => { finish(null); closeModal(); } },
-        {
-          label: submitLabel,
-          kind: danger ? "danger" : "primary",
-          onClick: () => {
-            const trimmed = input.value.trim();
-            const problem = validate ? validate(trimmed) : (trimmed ? null : "请输入内容");
-            if (problem) { setError(problem); input.focus(); return; }
-            finish(trimmed);
-            closeModal();
-          },
-        },
+        { label: submitLabel, kind: danger ? "danger" : "primary", onClick: () => void submit() },
       ],
       onClose: () => finish(null),
+      ready: (box) => { footer = box.querySelector(".modal-foot"); },
     });
+
+    function setModalBusy(state) {
+      footer?.querySelectorAll(".btn").forEach((button) => {
+        button.disabled = state;
+        button.classList.toggle("busy", state && button.classList.contains("primary"));
+      });
+    }
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        input.dispatchEvent(new Event("input"));
-        const trimmed = input.value.trim();
-        const problem = validate ? validate(trimmed) : (trimmed ? null : "请输入内容");
-        if (problem) { setError(problem); return; }
-        finish(trimmed);
-        closeModal();
+        void submit();
       }
     });
   });
 }
 
-export function confirmDialog({ title, message, detail, confirmLabel = "删除", danger = true }) {
+export function confirmDialog({ title, message, detail, confirmLabel = "删除", danger = true, confirmAsync }) {
   return new Promise((resolve) => {
     let settled = false;
+    let busy = false;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       resolve(result);
+    };
+
+    const errorLine = el("p", "form-error hidden");
+    let footer = null;
+    let box = null;
+
+    const run = async () => {
+      if (busy) return;
+      if (!confirmAsync) { finish(true); closeModal(); return; }
+      busy = true;
+      footer?.querySelectorAll(".btn").forEach((button) => {
+        button.disabled = true;
+        button.classList.toggle("busy", button.classList.contains("danger") || button.classList.contains("primary"));
+      });
+      try {
+        await confirmAsync();
+        finish(true);
+        closeModal();
+      } catch (error) {
+        busy = false;
+        footer?.querySelectorAll(".btn").forEach((button) => { button.disabled = false; button.classList.remove("busy"); });
+        errorLine.textContent = error.message || "操作失败，请重试";
+        errorLine.classList.remove("hidden");
+      }
     };
 
     showModal({
@@ -151,12 +194,15 @@ export function confirmDialog({ title, message, detail, confirmLabel = "删除",
       build: (container) => {
         if (message) container.append(el("p", "confirm-message", message));
         if (detail) container.append(el("p", "field-hint", detail));
+        container.append(errorLine);
       },
       actions: [
         { label: "取消", onClick: () => { finish(false); closeModal(); } },
-        { label: confirmLabel, kind: danger ? "danger" : "primary", onClick: () => { finish(true); closeModal(); } },
+        { label: confirmLabel, kind: danger ? "danger" : "primary", onClick: () => void run() },
       ],
       onClose: () => finish(false),
+      ready: (modalBox) => { box = modalBox; footer = modalBox.querySelector(".modal-foot"); },
     });
+    void box;
   });
 }

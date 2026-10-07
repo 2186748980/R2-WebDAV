@@ -45,6 +45,29 @@ async function parseError(response) {
   return message;
 }
 
+// The Worker returns English error strings; map the common ones to Chinese
+// for toasts and inline dialogs. Unknown messages pass through unchanged.
+const ERROR_MAP = [
+  [/already exists/i, "目标位置已存在同名文件或文件夹"],
+  [/parent (collection|folder) does not exist/i, "上级文件夹不存在"],
+  [/destination folder does not exist/i, "目标文件夹不存在"],
+  [/cannot be inside the source/i, "目标不能位于源文件夹内部"],
+  [/source not found|not found\.$/i, "文件或文件夹不存在"],
+  [/invalid (path|json|upload path|folder path|destination|share)/i, "路径或参数无效"],
+  [/unsafe/i, "路径包含不允许的字符"],
+  [/cannot be downloaded/i, "文件夹无法作为文件下载"],
+  [/multipart/i, "分片上传操作失败，请重试"],
+  [/authentication required/i, "登录状态已失效，请重新登录"],
+];
+
+export function friendlyMessage(message) {
+  if (!message) return message;
+  for (const [pattern, text] of ERROR_MAP) {
+    if (pattern.test(message)) return text;
+  }
+  return message;
+}
+
 async function request(path, { method = "GET", body, headers = {}, auth, json } = {}) {
   const finalHeaders = { ...headers };
   if (json !== undefined) {
@@ -67,7 +90,7 @@ async function request(path, { method = "GET", body, headers = {}, auth, json } 
     if (path !== "/session" && unauthorizedHandler) unauthorizedHandler(error);
     throw error;
   }
-  if (!response.ok) throw new ApiError(await parseError(response), response.status);
+  if (!response.ok) throw new ApiError(friendlyMessage(await parseError(response)), response.status);
 
   if (response.status === 204) return null;
   const text = await response.text();
