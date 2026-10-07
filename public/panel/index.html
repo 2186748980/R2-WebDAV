@@ -160,6 +160,15 @@
         <div class="kv"><span>登录会话</span><span id="sessionUser">—</span><button class="btn ghost sm" id="logoutBtn2">退出登录</button></div>
       </div>
       <div class="card">
+        <div class="card-head"><h2>凭据</h2></div>
+        <div class="kv"><span>用户名</span><code id="credUsername">—</code></div>
+        <div class="kv"><span>密码</span><code id="credPassword">••••••••</code>
+          <button class="btn ghost sm" id="togglePasswordBtn"><span data-icon="eye"></span>显示</button>
+          <button class="btn ghost sm" id="copyPasswordBtn"><span data-icon="copy"></span>复制</button>
+        </div>
+        <p class="muted">密码只在当前标签页内存中保留用于显示与复制；刷新、关闭标签页或退出登录后即消失。它不会写入任何存储、URL 或日志，也不会由任何 API 返回。</p>
+      </div>
+      <div class="card">
         <div class="card-head"><h2>服务信息</h2></div>
         <div class="kv"><span>Worker 地址</span><code id="settingsUrl">—</code></div>
         <div class="kv"><span>认证方式</span><strong>HTTP Basic Auth + Cookie 会话</strong></div>

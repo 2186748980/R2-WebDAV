@@ -31,6 +31,7 @@ const PATHS = {
   "chevron-right": '<path d="m9.2 5.5 6.5 6.5-6.5 6.5"/>',
   "refresh": '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20.5 3.5V9H15"/>',
   "eye": '<path d="M2.8 12S6.3 5.8 12 5.8 21.2 12 21.2 12 17.7 18.2 12 18.2 2.8 12 2.8 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  "eye-off": '<path d="M4 4l16 16"/><path d="M10.6 6A9.6 9.6 0 0 1 12 5.8c5.7 0 9.2 6.2 9.2 6.2a17.4 17.4 0 0 1-2.8 3.5M6.5 6.7C3.9 8.5 2.8 12 2.8 12s3.5 6.2 9.2 6.2a9.3 9.3 0 0 0 3.5-.7"/><path d="M9.9 9.9a2.8 2.8 0 0 0 4 4"/>',
   "info": '<circle cx="12" cy="12" r="8.5"/><path d="M12 11.2v4.8"/><circle cx="12" cy="8.2" r="1" fill="currentColor" stroke="none"/>',
   "alert": '<path d="M12 4.2 3.4 19a1.3 1.3 0 0 0 1.1 2h15a1.3 1.3 0 0 0 1.1-2z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.4" r="1" fill="currentColor" stroke="none"/>',
   "logout": '<path d="M9.5 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.5"/><path d="m15.5 16.5 4.5-4.5-4.5-4.5"/><path d="M20 12H9.5"/>',

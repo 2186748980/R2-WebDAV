@@ -2,7 +2,7 @@
 // overview / WebDAV / settings views. Files and uploads live in their own
 // modules; everything here only orchestrates.
 
-import { api, ApiError, hasSession, markSession, clearSession, onUnauthorized } from "./js/api.js";
+import { api, ApiError, hasSession, markSession, clearSession, onUnauthorized, rememberPassword, forgetPassword, getRememberedPassword } from "./js/api.js";
 import { icon } from "./js/icons.js";
 import { toast, copyText, fmtSize } from "./js/ui.js";
 import { initFiles, currentPath, isActive, refreshIfCurrent, setActive } from "./js/files.js";
@@ -77,6 +77,7 @@ function showApp() {
 
 onUnauthorized(() => {
   clearSession();
+  forgetPassword();
   if (!loginSection.classList.contains("hidden")) return;
   showLogin("会话已失效，请重新登录");
 });
@@ -97,6 +98,7 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
   submit.textContent = "登录中…";
   try {
     await api.login(username, password);
+    rememberPassword(password);
     markSession();
     error.classList.add("hidden");
     document.getElementById("loginPass").value = "";
@@ -113,6 +115,8 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
 async function logout() {
   try { await api.logout(); } catch { /* the cookie disappears regardless */ }
   clearSession();
+  forgetPassword();
+  passwordVisible = false;
   showLogin();
 }
 
@@ -144,7 +148,11 @@ function setView(name) {
     void loadWebdav();
   } else if (view === "settings") {
     if (!configCache) void loadOverview();
-    else document.getElementById("sessionUser").textContent = configCache.username;
+    else {
+      document.getElementById("sessionUser").textContent = configCache.username;
+      document.getElementById("credUsername").textContent = configCache.username;
+    }
+    renderCredentials();
   }
 }
 
@@ -196,6 +204,7 @@ async function loadOverview() {
     document.getElementById("serverUrl").textContent = configCache.serverUrl;
     document.getElementById("username").textContent = configCache.username;
     document.getElementById("sessionUser").textContent = configCache.username;
+    document.getElementById("credUsername").textContent = configCache.username;
     document.getElementById("settingsUrl").textContent = configCache.serverUrl;
     document.getElementById("statFiles").textContent = configCache.stats?.files ?? "—";
     document.getElementById("statFolders").textContent = configCache.stats?.folders ?? "—";
@@ -247,6 +256,36 @@ document.getElementById("copyConfigBtn").addEventListener("click", () => {
 document.getElementById("refreshBtn").addEventListener("click", () => {
   if (location.hash.slice(1) === "files" || isActive()) void refreshIfCurrent();
   else void loadOverview();
+});
+
+// ---- Credentials display (settings) ---------------------------------------
+
+let passwordVisible = false;
+
+function renderCredentials() {
+  const remembered = getRememberedPassword();
+  const code = document.getElementById("credPassword");
+  const toggle = document.getElementById("togglePasswordBtn");
+  const copyButton = document.getElementById("copyPasswordBtn");
+  if (!remembered) {
+    code.textContent = "未持有（重新登录后可显示）";
+    toggle.classList.add("hidden");
+    copyButton.classList.add("hidden");
+    return;
+  }
+  toggle.classList.remove("hidden");
+  copyButton.classList.remove("hidden");
+  code.textContent = passwordVisible ? remembered : "••••••••";
+  toggle.innerHTML = icon(passwordVisible ? "eye-off" : "eye", 15) + (passwordVisible ? "隐藏" : "显示");
+}
+
+document.getElementById("togglePasswordBtn").addEventListener("click", () => {
+  passwordVisible = !passwordVisible;
+  renderCredentials();
+});
+document.getElementById("copyPasswordBtn").addEventListener("click", () => {
+  const remembered = getRememberedPassword();
+  if (remembered) void copyText(remembered);
 });
 
 // ---- Boot ----------------------------------------------------------------------

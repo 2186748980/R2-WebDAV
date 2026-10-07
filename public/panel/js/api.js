@@ -20,6 +20,15 @@ export function hasSession() { return sessionStorage.getItem(SESSION_FLAG) === "
 export function markSession() { sessionStorage.setItem(SESSION_FLAG, "1"); }
 export function clearSession() { sessionStorage.removeItem(SESSION_FLAG); }
 
+// The password typed at login is kept for display/copy in Settings, but ONLY
+// in this module-scoped variable: it never reaches localStorage, sessionStorage,
+// URLs, logs, or any API response, and it dies with the tab. After a reload
+// the cookie still authenticates, but the password is simply unknown again.
+let rememberedPassword = null;
+export function rememberPassword(value) { rememberedPassword = value; }
+export function forgetPassword() { rememberedPassword = null; }
+export function getRememberedPassword() { return rememberedPassword; }
+
 function base64Utf8(value) {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
