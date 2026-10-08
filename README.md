@@ -1,77 +1,103 @@
 # R2 WebDAV
 
-把 **Cloudflare R2 变成一个可以通过 WebDAV 访问的私人网盘**。
+把 **Cloudflare R2 变成一个可通过 WebDAV 访问的私人云盘**。
 
-这个项目运行在 **Cloudflare Workers** 上，文件实际存放在你自己的 **Cloudflare R2 Bucket** 中。手机、电脑、OpenList 或其他支持 WebDAV 的软件，都可以通过一个 HTTPS 地址访问这些文件。
+项目运行在 **Cloudflare Workers** 上，文件存储在你自己的 **Cloudflare R2 Bucket** 中。除了标准 WebDAV 接口，还提供现代化的 Web 管理面板，用于文件浏览、上传、预览、批量操作和临时分享。
 
-> 适合个人文件、配置文件、备份、照片/视频等轻量场景。
-> 本项目不会把你的 Cloudflare 账号、R2 密钥或 WebDAV 密码写进代码。
+> 适合个人文件、配置文件、照片、备份和轻量级文件存储。
+>
+> 项目不需要 VPS、Docker 或独立服务器；WebDAV 凭据使用 Cloudflare Worker Secrets 保存。
 
-## 它是怎么工作的？
+## 特性
 
-```text
-手机 / 电脑 / OpenList
-        │
-        │ WebDAV + HTTPS
-        ▼
-Cloudflare Worker
-        │
-        │ R2 Binding
-        ▼
-你的 Cloudflare R2 Bucket
-        │
-        ▼
-你的文件
-```
+### WebDAV
 
-你不需要购买 VPS，也不需要自己维护服务器。
-
-Worker 负责：
-- WebDAV 协议
-- HTTPS
-- 用户名/密码认证
-- 文件上传、下载、删除
-- 文件夹创建和浏览
-- 文件复制、移动
-- R2 与 WebDAV 之间的数据转换
-
-R2 负责真正保存文件。
-
-## 支持什么？
-
-| 功能 | 支持情况 |
+| 功能 | 状态 |
 |---|---|
 | HTTPS | ✅ |
-| Basic Auth 用户名/密码 | ✅ |
-| 上传文件 PUT | ✅ |
-| 下载文件 GET | ✅ |
-| 查看目录 PROPFIND | ✅ Depth 0 / 1 |
-| 创建文件夹 MKCOL | ✅ |
-| 删除文件/文件夹 DELETE | ✅ |
-| 复制 COPY | ✅ |
-| 移动 MOVE | ✅ |
+| Basic Auth | ✅ |
+| 上传 / 下载 | ✅ |
+| 目录浏览 | ✅ |
+| 新建目录 | ✅ |
+| 删除 | ✅ |
+| 复制 / 移动 | ✅ |
 | Range 下载 | ✅ |
 | ETag / Last-Modified | ✅ |
 | OpenList | ✅ |
-| Mihomo / Clash / sing-box 配置备份 | ✅ |
-| 多用户权限管理 | ❌ |
-| 匿名访问 | ❌ |
 | LOCK / UNLOCK | ❌ |
 
-## 部署前需要什么？
+支持 OPTIONS、PROPFIND、GET、HEAD、PUT、DELETE、MKCOL、COPY、MOVE 等常用 WebDAV 方法。
 
-只需要：
-1. 一个 Cloudflare 账号
-2. 一个 R2 Bucket
-3. 一个 Cloudflare Worker
-4. 一个 WebDAV 用户名和密码
-5. 一个支持 WebDAV 的客户端
+### Web 管理面板
 
-不需要 VPS、Docker、Linux 服务器或 R2 S3 API Token。
+访问：
+
+- 面板：/panel/
+- WebDAV：/
+
+主要功能：
+
+- 登录认证与 24 小时 HttpOnly Session
+- 文件列表 / 网格视图
+- 排序、搜索、面包屑和加载更多
+- 拖拽上传、文件选择、上传进度、暂停 / 继续 / 取消 / 重试
+- ≥20 MiB 自动使用 R2 Multipart Upload
+- 新建目录、重命名、复制、移动、删除
+- 批量删除 / 复制 / 移动
+- 图片、视频、音频、PDF、文本预览
+- 临时分享链接
+- 分享有效期：1 小时 / 24 小时 / 7 天
+- 浅色 / 深色 / 跟随系统主题
+- 移动端抽屉导航和底部操作面板
+- 文件详情与高级信息
+- WebDAV 连接配置说明
+- R2 状态和基础存储信息
+
+面板同时适配桌面端和移动端。
+
+## 工作原理
+
+```text
+┌──────────────────────────────┐
+│       手机 / 电脑 / OpenList  │
+└──────────────┬───────────────┘
+               │ HTTPS / WebDAV
+               ▼
+┌──────────────────────────────┐
+│      Cloudflare Worker       │
+│                              │
+│  WebDAV API + 管理面板 + Auth │
+└──────────────┬───────────────┘
+               │ R2 Binding
+               ▼
+┌──────────────────────────────┐
+│      Cloudflare R2 Bucket    │
+│          文件对象存储         │
+└──────────────────────────────┘
+```
+
+R2 本身是对象存储，没有传统文件系统中的真实目录。
+
+例如：
+
+```text
+backups/mihomo/config.yaml
+```
+
+实际上是一个带前缀的 R2 Object。Worker 将这些 Object 映射成 WebDAV 客户端看到的文件和目录。
 
 ## 快速部署
 
-### 1. 下载项目
+### 环境要求
+
+- Cloudflare 账号
+- Node.js + npm
+- Wrangler
+- 一个 Cloudflare R2 Bucket
+
+不需要 VPS、Docker 或 Linux 服务器。
+
+### 1. 克隆项目
 
 ```bash
 git clone https://github.com/2186748980/R2-WebDAV.git
@@ -87,23 +113,30 @@ npx wrangler login
 
 ### 3. 创建 R2 Bucket
 
-先在 `wrangler.toml` 中把 `bucket_name` 改成你自己的 Bucket 名称，然后创建同名 Bucket：
+修改 wrangler.toml：
+
+```toml
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "your-webdav-bucket"
+```
+
+然后创建同名 Bucket：
 
 ```bash
 npx wrangler r2 bucket create your-webdav-bucket
 ```
 
-### 4. 设置 WebDAV 账号密码
+### 4. 设置 WebDAV 凭据
 
-不要把账号密码写进代码。
+**必须使用 Worker Secret，不要配置成普通 Text/明文变量。**
 
 ```bash
 npx wrangler secret put WEBDAV_USERNAME
 npx wrangler secret put WEBDAV_PASSWORD
 ```
 
-> **必须使用 "Secret" 类型，不要用 "Text"。**
-> 如果在 Dashboard 的 *Variables and Secrets* 里把这两个值添加成 **Text（明文变量）**，下一次 `wrangler deploy`（包括 Git 自动部署）会把它们清掉，整个服务会变成 503 "WebDAV service is not configured."。Secret 类型会被后续每次部署自动继承，且永远不需要写进 `wrangler.toml`。
+项目不会把凭据写入 wrangler.toml。
 
 ### 5. 部署
 
@@ -111,123 +144,258 @@ npx wrangler secret put WEBDAV_PASSWORD
 npm run deploy
 ```
 
-`npm run deploy` = 部署前检查（`scripts/check-secrets.mjs`，缺少任一 Secret 直接终止部署并给出修复指引）→ `npx wrangler deploy` → 部署后验证（`scripts/verify-deployment.mjs`，确认线上认证门生效、`/panel` 无重定向）。
-
-部署成功后，Wrangler 会给你一个类似这样的地址：
+部署脚本会依次执行：
 
 ```text
-https://your-webdav-worker.your-subdomain.workers.dev/
+predeploy
+  ↓
+check-secrets.mjs
+  ↓
+wrangler deploy
+  ↓
+verify-deployment.mjs
 ```
 
-这个地址就是你的 WebDAV 地址。
+缺少 WEBDAV_USERNAME 或 WEBDAV_PASSWORD 时会直接终止部署，避免产生未配置凭据的生产版本。
 
-## 在 OpenList 中使用
+## 使用 WebDAV
 
-在 OpenList 中新增存储，选择 **WebDAV**。
+部署完成后，使用 Worker HTTPS 地址作为 WebDAV 服务器。
 
-| 项目 | 填写内容 |
+| 配置 | 内容 |
 |---|---|
-| 地址 | 你的 Worker HTTPS 地址 |
-| 用户名 | `WEBDAV_USERNAME` 的实际值 |
-| 密码 | `WEBDAV_PASSWORD` 的实际值 |
-| 根路径 | `/` 或 `/backups` |
-| TLS 证书验证 | 开启 |
+| 服务器地址 | Worker HTTPS 地址 |
+| 用户名 | WEBDAV_USERNAME |
+| 密码 | WEBDAV_PASSWORD |
+| 根路径 | / |
 
-注意：地址一般不要再额外添加 `/webdav`、`/dav` 等路径。
+一般**不要**额外添加 /webdav、/dav 等路径。
 
-## 手机 / 电脑客户端
+### OpenList
 
-只要软件支持 WebDAV，就可以连接。
+新增存储 → 选择 **WebDAV**：
 
-填写：
+- 地址：Worker HTTPS 地址
+- 用户名：WebDAV 用户名
+- 密码：WebDAV 密码
+- TLS 证书验证：开启
+
+## 临时分享
+
+管理面板可以为单个文件生成临时分享链接。
+
+分享链接：
+
+- 只允许访问被分享的单个文件
+- 不提供目录列表
+- 不允许 WebDAV 操作
+- 不需要 Basic Auth
+- 使用 HMAC-SHA-256 签名
+- 有效期最长 7 天
+- 修改 WEBDAV_PASSWORD 后，原分享链接立即失效
+
+当前分享有效期选项：
 
 ```text
-服务器地址：你的 Worker 地址
-用户名：你的 WebDAV 用户名
-密码：你的 WebDAV 密码
+1 小时
+24 小时
+7 天
 ```
 
-## 配置文件备份
+> 当前分享系统定位为轻量临时分享，不是公开文件市场或多用户协作系统。
 
-这个项目特别适合保存小型配置文件，例如：
+## 大文件
+
+管理面板对 **≥20 MiB** 的文件自动使用 R2 Multipart Upload。
+
+R2 Multipart 支持：
+
+- 最大对象：5 TiB
+- 最多：10,000 个 Part
+- 非最后 Part：至少 5 MiB
+
+浏览器端只在当前页面保存 Multipart 状态。刷新或关闭页面后不会自动恢复中断上传。
+
+实际可用上传能力仍受 Cloudflare Workers、R2 和浏览器环境限制，请以当前 Cloudflare 官方限制为准。
+
+## 安全设计
+
+### 凭据
+
+以下内容**不要提交到 GitHub**：
+
+- WEBDAV_USERNAME
+- WEBDAV_PASSWORD
+- Cloudflare API Token
+- R2 S3 Access Key
+- R2 S3 Secret Key
+
+WebDAV 用户名和密码使用 Worker Secrets。
+
+### 管理面板
+
+/panel 的静态页面可以公开加载，但实际数据接口始终需要认证。
+
+登录后：
 
 ```text
-/backups/
-├── mihomo/
-│   ├── config.yaml
-│   └── providers.yaml
-├── sing-box/
-│   └── config.json
-└── other/
-    └── backup.txt
+Basic Auth
+    ↓
+HMAC 签名 HttpOnly Cookie
+    ↓
+24 小时 Session
 ```
 
-## 本地测试
+前端不会从服务器读取 WebDAV 密码，也不会将密码写入 URL、localStorage 或 sessionStorage。
 
-不需要 Cloudflare 账号即可运行模拟 R2 测试：
+修改 WEBDAV_PASSWORD 会使已有 Session 和临时分享链接失效。
+
+### 单用户模型
+
+当前项目是**单用户私人云盘**：
+
+- 一个 WebDAV 账号
+- 无 RBAC
+- 无多用户数据库
+- 无匿名目录访问
+- 删除立即生效
+- 无回收站
+
+如果需要灾难恢复，请使用独立 R2 备份、版本控制或生命周期策略，不要把本项目作为唯一数据副本。
+
+## 本地检查
+
+不需要真实 R2 数据即可运行项目测试：
 
 ```bash
 npm run check
 npm test
 ```
 
-部署链路上的两个检查脚本也可以单独运行（需要能访问 Cloudflare API / workers.dev 的网络）：
+部署前 Secret 检查：
 
 ```bash
-node scripts/check-secrets.mjs                                  # 检查两个 Secret 是否以 Secret 类型存在
-node scripts/verify-deployment.mjs https://r2-webdav.2186.workers.dev --wait 300   # 部署后验证线上
+node scripts/check-secrets.mjs
 ```
 
-GitHub Actions 在每次 push 后也会自动运行同样的线上验证（`verify-deployment` job）：线上出现 503 未配置、认证门失效或 `/panel` 重定向时，该 job 会明确失败。
+部署后生产验证：
 
-测试覆盖：管理面板三个入口（`/panel`、`/panel/`、`/panel/index.html`，认证后必须 200 且无重定向）、面板全部 API（config/list/file/download/upload/multipart/action/stats/health/search/share）、WebDAV 全方法（OPTIONS、PROPFIND、GET、HEAD、PUT、DELETE、MKCOL、COPY、MOVE）、Range 请求、ETag 条件请求、中文/空格/% 文件名、路径穿越防护、分享链接签名与过期。
+```bash
+node scripts/verify-deployment.mjs https://your-worker.workers.dev --wait 300
+```
 
-## 安全注意事项
+测试覆盖包括：
 
-不要把 `WEBDAV_USERNAME`、`WEBDAV_PASSWORD`、Cloudflare API Token、R2 S3 Access Key 或 R2 S3 Secret Key 提交到 GitHub。
+- Panel 路由与认证
+- Panel API
+- WebDAV 方法
+- Multipart
+- Range
+- ETag
+- 分享签名与过期
+- 中文、空格、% 文件名
+- 路径穿越防护
+- 文件上传 / 下载等核心逻辑
 
-项目使用 Worker Secrets 保存 WebDAV 账号密码。
+## 自动部署
 
-也不要关闭认证，否则任何知道 Worker 地址的人都有可能访问你的文件。
-
-## R2 和 WebDAV 的关系
-
-R2 本质上是对象存储，并没有传统服务器那种真正的文件夹。
-
-例如：
+生产环境使用 **Cloudflare Workers Builds + GitHub**。
 
 ```text
-backups/mihomo/config.yaml
+git push main
+      │
+      ├──────────────► GitHub Actions
+      │                 ├─ npm test
+      │                 └─ npm run check / production verify
+      │
+      └──────────────► Cloudflare Workers Builds
+                         │
+                         └─ npm run deploy
+                              ├─ Secret 检查
+                              ├─ Wrangler 部署
+                              └─ 生产验证
 ```
 
-本质上是一个 R2 对象。Worker 会把这些对象转换成 WebDAV 客户端看到的文件和目录。
+GitHub Actions 负责独立测试和验收；Cloudflare Workers Builds 负责生产部署。
 
-## 使用边界
+生产部署必须经过：
 
-这个项目更适合个人使用和轻量文件存储。如果大量上传视频、频繁同步或进行大规模目录扫描，需要根据 Cloudflare 当前的 Workers / R2 额度和计费规则评估成本。
+```text
+check-secrets
+    ↓
+wrangler deploy
+    ↓
+verify-deployment
+```
+
+项目不会通过 GitHub Actions 绕过 Cloudflare 的生产部署链路。
+
+## 自定义域名
+
+如果 Cloudflare 托管你的域名，可以给 Worker 配置 Custom Domain，例如：
+
+```text
+https://dav.example.com
+```
+
+然后直接使用该地址作为 WebDAV 服务器。
 
 ## 项目结构
 
 ```text
 R2-WebDAV/
 ├── src/
-│   └── worker.js          # WebDAV 核心代码
+│   └── worker.js              # WebDAV + API + 认证核心
+├── public/
+│   └── panel/                 # Web 管理面板
+│       ├── app.js
+│       ├── style.css
+│       └── js/
+├── scripts/
+│   ├── check-secrets.mjs      # 部署前 Secret 门禁
+│   └── verify-deployment.mjs  # 部署后生产验证
 ├── test/
-│   └── worker.test.mjs    # 本地模拟 R2 测试
-├── wrangler.toml          # Worker + R2 配置
-├── package.json
-└── README.md
+│   └── worker.test.mjs        # 核心测试
+├── wrangler.toml
+└── package.json
 ```
 
-## 自定义域名
+## 使用边界
 
-默认可以使用 `workers.dev` 地址。如果你有 Cloudflare 托管的域名，也可以给 Worker 配置 Custom Domain，例如 `https://dav.example.com`。
+这个项目适合：
 
-## 一句话总结
+- 个人文件
+- 手机 / 电脑文件访问
+- 配置文件和备份
+- OpenList 等 WebDAV 客户端
+- 轻量级文件分享
 
-**R2 WebDAV = Cloudflare Worker + Cloudflare R2 + WebDAV。**
+不建议直接当作：
 
-Worker 负责提供 WebDAV 接口，R2 负责存文件。你只需要一个 HTTPS 地址，就可以从手机、电脑和 OpenList 访问自己的文件。
+- 大规模视频站
+- 企业级多人网盘
+- 唯一的灾备系统
+- 高并发公共下载站
+
+实际成本取决于 Cloudflare 当前 Workers / R2 用量和计费规则。部署前请以 Cloudflare 官方文档和你的实际用量为准。
+
+## 路线
+
+项目目前优先保持：
+
+```text
+WebDAV
+  +
+R2 文件管理
+  +
+移动端 Panel
+  +
+临时分享
+  +
+安全部署
+```
+
+后续可以继续增强分享管理、下载统计等能力，但不会为了堆功能而引入不必要的数据库或基础设施。
 
 ## 相关文档
 
@@ -237,63 +405,8 @@ Worker 负责提供 WebDAV 接口，R2 负责存文件。你只需要一个 HTTP
 - [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
 - [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
 
-## Management panel
+---
 
-After deployment, open:
+**R2 WebDAV = Cloudflare Workers + Cloudflare R2 + WebDAV。**
 
-- Management panel: `https://r2-webdav.2186.workers.dev/panel/`（未登录时显示独立登录页）
-- WebDAV endpoint: `https://r2-webdav.2186.workers.dev/`
-
-The panel shell (`/panel`、`/panel/style.css`、`/panel/js/*`) is intentionally public — it contains no data. Login uses the same `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` credentials and exchanges them for a short-lived HMAC-signed HttpOnly cookie (24 h); media previews and download links authenticate with that cookie. The API (`/panel/api/*`) requires Basic Auth or a valid session cookie at all times, and the password itself is never stored by the frontend. Changing `WEBDAV_PASSWORD` invalidates all sessions and share links immediately.
-
-The panel provides:
-
-- Branded login view (inline error handling, no native browser dialog)
-- File browser with list/grid views, sortable columns, breadcrumbs and load-more pagination
-- Current-directory filtering plus Enter-to-run global search with result paths
-- Drag-and-drop upload anywhere, file picker, and a floating upload tray with progress, pause/resume, cancel and retry; files ≥20 MiB automatically use R2 multipart
-- Inline dialogs for new folder / rename / copy / move, recursive-delete confirmation, file details, preview (image/video/audio/PDF/text ≤2 MiB) and temporary share links (1 h / 24 h / 7 d)
-- Batch selection with delete / copy / move
-- Light/dark/auto theme, responsive layout with mobile drawer navigation and bottom-sheet action menus
-- Overview dashboard (server address, username, storage stats, R2 health) and WebDAV connection guide
-
-The panel never returns or stores the WebDAV password. Keep `WEBDAV_PASSWORD` in Cloudflare Worker Secrets.
-
-### Large files
-
-The management panel automatically switches to R2 Multipart for files at or above 20 MiB. R2 multipart supports objects up to 5 TiB and up to 10,000 parts; each non-final part must be at least 5 MiB. The browser keeps the multipart upload state locally for the active page, so an interrupted browser session is not automatically resumed after a refresh.
-
-### Temporary sharing
-
-The file context menu can generate a read-only temporary URL. The URL is stateless and signed with HMAC-SHA-256 using the current `WEBDAV_PASSWORD` as the signing secret. Expiration is limited to 7 days. Changing `WEBDAV_PASSWORD` invalidates previously generated share URLs.
-
-Share URLs bypass Basic Auth by design, but they only expose the single file represented by the signed token. They do not expose directory listing, WebDAV operations, or the management panel.
-
-### Current design boundaries
-
-This project intentionally remains a single-user private cloud:
-- one Basic Auth account
-- no RBAC / multi-user database
-- delete is immediate; there is no recycle bin
-- browser multipart uploads are resumable only while the current page retains their upload state
-- WebDAV `LOCK` / `UNLOCK` are still not implemented
-
-For stronger disaster recovery, keep an independent R2 backup or lifecycle/versioning strategy rather than treating this Worker as the only copy.
-
-### Cloudflare Static Assets
-
-The Worker serves `public/panel/` as Workers Static Assets while `run_worker_first` protects the panel and panel API with the existing Basic Auth. The WebDAV root path remains `/` for compatibility with existing clients.
-
-## 部署架构（唯一生产部署链路）
-
-```text
-git push main
-  → Cloudflare Workers Builds（GitHub 集成，script_tag 8cabe4d7…）
-  → 构建容器执行 npm run deploy：
-      1. predeploy: scripts/check-secrets.mjs   ← 缺 Secret 直接终止，不产生新版本
-      2. npx wrangler deploy
-      3. scripts/verify-deployment.mjs          ← 线上 401/503/重定向验证，失败即构建失败
-  → GitHub Actions verify-deployment job 独立复查线上（5 分钟轮询）
-```
-
-生产部署命令配置在 Cloudflare Workers Builds 中为 `npm run deploy`（2026-10-06 由裸 `npx wrangler deploy` 收紧，裸命令曾导致无门禁的自动部署）；PR 预览构建已关闭。手动部署走同一条管线：`npm run deploy`。
+一个 Worker，一个 R2 Bucket，一个 HTTPS 地址，把你的 R2 变成自己的 WebDAV 私人云盘。
