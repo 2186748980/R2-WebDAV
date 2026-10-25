@@ -549,6 +549,7 @@ function showMenu(anchor, item) {
   menu.innerHTML = "";
   const add = (glyph, label, handler, kind = "") => {
     const entry = el("button", "menu-item" + (kind ? " " + kind : ""));
+    entry.setAttribute("role", "menuitem");
     entry.innerHTML = icon(glyph, 16);
     entry.append(el("span", null, label));
     entry.addEventListener("click", () => { hideMenu(); handler(); });
