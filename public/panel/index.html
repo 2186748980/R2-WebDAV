@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f6f8">
 <meta name="description" content="R2-WebDAV 私有云管理面板">
 <title>R2-WebDAV · 私有云</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ctext x='16' y='21.5' font-family='system-ui,sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3ER2%3C/text%3E%3C/svg%3E">
@@ -14,11 +15,12 @@
 // explicit choice stored by app.js.
 (function () {
   try {
+    var meta = document.querySelector('meta[name="theme-color"]');
     var setting = localStorage.getItem("r2dav.theme");
-    if (setting === "light" || setting === "dark") {
-      document.documentElement.dataset.theme = setting;
-    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    var dark = setting === "dark" || (setting !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    if (dark) {
       document.documentElement.dataset.theme = "dark";
+      if (meta) meta.content = "#0e1116";
     }
   } catch (error) { /* private mode: stay on defaults */ }
 })();
@@ -66,7 +68,7 @@
   <main class="main">
     <header class="topbar">
       <button class="icon-btn only-mobile" id="menuBtn" title="菜单" aria-label="打开菜单"><span data-icon="menu"></span></button>
-      <div class="topbar-title"><span class="eyebrow" id="pageEyebrow">OVERVIEW</span><h1 id="pageTitle">概览</h1></div>
+      <div class="topbar-title"><h1 id="pageTitle">概览</h1></div>
       <div class="topbar-actions">
         <button class="icon-btn" id="trayBtn" title="上传列表" aria-label="上传列表"><span data-icon="upload"></span><span id="trayBadge" class="badge-count hidden">0</span></button>
         <button class="icon-btn" id="themeBtn" title="切换深浅色" aria-label="切换深浅色"><span data-icon="moon"></span></button>
@@ -75,31 +77,38 @@
     </header>
 
     <section id="view-overview" class="view">
-      <div class="grid g-2">
-        <div class="card">
-          <div class="status-row"><span class="dot" id="healthDot"></span><span id="healthText">检查中…</span></div>
-          <div class="server-line"><span class="muted-label">服务器地址</span><code id="serverUrl">—</code></div>
-          <div class="quick-row"><button class="btn primary" data-goto="files">进入文件管理</button><button class="btn ghost" data-goto="webdav">连接配置</button></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h2>存储概览</h2><span class="badge" id="r2Badge">检查中…</span></div>
+      <!-- 一级：服务状态横幅（健康 / 地址 / 快捷入口 同屏一行组） -->
+      <div class="card hero-banner">
+        <div class="hero-row"><span class="dot" id="healthDot"></span><strong id="healthText">检查中…</strong><span class="badge" id="r2Badge">检查中…</span></div>
+        <div class="hero-server"><span class="muted-label">服务器地址</span><code id="serverUrl">—</code><button class="btn ghost sm" data-copy="serverUrl">复制</button></div>
+        <div class="hero-actions"><button class="btn primary" data-goto="files">进入文件管理</button><button class="btn ghost" data-goto="webdav">连接配置</button></div>
+      </div>
+      <!-- 二级：存储容量横带（大数字 + 免费额度进度条） -->
+      <div class="card storage-band">
+        <div class="card-head"><h2>存储概览</h2><span class="badge" id="statsScope">…</span></div>
+        <div class="storage-body">
+          <div class="storage-main"><strong id="statBytes">—</strong><span>已用空间 · 按免费额度 10 GB 计</span></div>
           <div class="stat-grid">
             <div class="stat"><strong id="statFiles">—</strong><span>文件</span></div>
             <div class="stat"><strong id="statFolders">—</strong><span>文件夹</span></div>
-            <div class="stat"><strong id="statBytes">—</strong><span>已用空间</span></div>
           </div>
-          <p class="muted" id="statsNote"></p>
         </div>
+        <div class="storage-bar" aria-hidden="true"><i id="storageFill"></i></div>
+        <p class="muted" id="statsNote"></p>
       </div>
+      <!-- 三级：账号与安全（合并卡，去掉装饰性徽章） -->
       <div class="grid g-2">
         <div class="card">
-          <div class="card-head"><h2>账号</h2><span class="badge ok">已启用</span></div>
+          <div class="card-head"><h2>账号与安全</h2></div>
           <div class="kv"><span>用户名</span><code id="username">—</code><button class="btn ghost sm" data-copy="username">复制</button></div>
           <div class="kv"><span>R2 存储</span><span id="r2Status">检查中…</span></div>
+          <p class="muted">面板登录与 WebDAV 共用同一套账号密码；临时分享链接由密码派生签名，修改密码后旧链接与会话同时失效。</p>
         </div>
         <div class="card">
-          <div class="card-head"><h2>安全</h2><span class="badge ok">Private</span></div>
-          <p class="muted">面板登录与 WebDAV 共用同一套账号密码；临时分享链接由密码派生签名，修改密码后旧链接与会话同时失效。</p>
+          <div class="card-head"><h2>客户端接入</h2><button class="btn ghost sm" data-goto="webdav">查看配置</button></div>
+          <p class="muted">任意支持 WebDAV 的客户端（OpenList / Alist、Android 文件管理器等）用上方地址与账号即可挂载；浏览器里也可以直接生成单文件的临时分享链接。</p>
+          <div class="kv"><span>认证方式</span><strong>HTTP Basic + 会话 Cookie</strong></div>
+          <div class="kv"><span>传输</span><strong>HTTPS only</strong></div>
         </div>
       </div>
     </section>
@@ -122,8 +131,8 @@
               <button data-mode="list" title="列表视图" aria-label="列表视图"><span data-icon="list"></span></button>
               <button data-mode="grid" title="网格视图" aria-label="网格视图"><span data-icon="grid"></span></button>
             </div>
-            <button class="btn ghost" id="newFolderBtn"><span data-icon="folder-plus"></span><span class="btn-label">文件夹</span></button>
-            <button class="btn primary" id="uploadBtn"><span data-icon="upload"></span><span class="btn-label">上传</span></button>
+            <button class="btn ghost" id="newFolderBtn" aria-label="新建文件夹"><span data-icon="folder-plus"></span><span class="btn-label">文件夹</span></button>
+            <button class="btn primary" id="uploadBtn" aria-label="上传文件"><span data-icon="upload"></span><span class="btn-label">上传</span></button>
           </div>
         </div>
         <div id="globalHint" class="global-hint hidden"></div>
@@ -193,12 +202,14 @@
       </div>
       <div class="card">
         <div class="card-head"><h2>服务信息</h2></div>
-        <div class="kv"><span>Worker 地址</span><code id="settingsUrl">—</code></div>
-        <div class="kv"><span>认证方式</span><strong>HTTP Basic Auth + Cookie 会话</strong></div>
-        <div class="kv"><span>存储</span><strong>Cloudflare R2</strong></div>
-        <div class="kv"><span>传输</span><strong>HTTPS only</strong></div>
-        <div class="kv"><span>大文件上传</span><strong>R2 Multipart（≥20 MiB）</strong></div>
-        <div class="kv"><span>分享</span><strong>HMAC 临时链接（最长 7 天）</strong></div>
+        <div class="spec-grid">
+          <div class="spec"><span>Worker 地址</span><code id="settingsUrl">—</code></div>
+          <div class="spec"><span>认证方式</span><strong>HTTP Basic Auth + Cookie 会话</strong></div>
+          <div class="spec"><span>存储</span><strong>Cloudflare R2</strong></div>
+          <div class="spec"><span>传输</span><strong>HTTPS only</strong></div>
+          <div class="spec"><span>大文件上传</span><strong>R2 Multipart（≥20 MiB）</strong></div>
+          <div class="spec"><span>分享</span><strong>HMAC 临时链接（最长 7 天）</strong></div>
+        </div>
       </div>
       <div class="card">
         <div class="card-head"><h2>当前边界</h2></div>
@@ -218,6 +229,7 @@
 </div>
 <div id="menu" class="menu hidden" role="menu"></div>
 <div id="modal" class="modal hidden"></div>
+<div id="drawer" class="drawer-layer hidden"></div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <input type="file" id="fileInput" multiple class="hidden-input">
 

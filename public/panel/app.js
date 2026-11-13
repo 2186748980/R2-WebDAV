@@ -26,8 +26,11 @@ function resolvedTheme() {
 }
 
 function applyTheme() {
-  document.documentElement.dataset.theme = resolvedTheme();
-  document.getElementById("themeBtn").innerHTML = icon(resolvedTheme() === "dark" ? "sun" : "moon", 18);
+  const dark = resolvedTheme() === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  // Address-bar / status-bar tint follows the active theme.
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0e1116" : "#f4f6f8");
+  document.getElementById("themeBtn").innerHTML = icon(dark ? "sun" : "moon", 18);
   document.querySelectorAll("#themeSeg [data-theme-mode]").forEach((button) => {
     button.classList.toggle("active", button.dataset.themeMode === (localStorage.getItem(THEME_KEY) || "auto"));
   });
@@ -95,7 +98,9 @@ revealButton.addEventListener("click", () => {
 
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (booting) return;
+  // No `booting` guard here: that flag only marks one-time module init and
+  // stays true after logout, which would silently swallow every subsequent
+  // login submit. Double-submit is already covered by disabling the button.
   const username = document.getElementById("loginUser").value.trim();
   const password = loginPassInput.value;
   const error = document.getElementById("loginError");
@@ -141,10 +146,10 @@ document.getElementById("logoutBtn2").addEventListener("click", () => void logou
 // ---- Navigation ------------------------------------------------------------
 
 const VIEWS = {
-  overview: { title: "概览", eyebrow: "OVERVIEW" },
-  files: { title: "文件", eyebrow: "FILES" },
-  webdav: { title: "WebDAV", eyebrow: "WEBDAV" },
-  settings: { title: "设置", eyebrow: "SETTINGS" },
+  overview: { title: "概览" },
+  files: { title: "文件" },
+  webdav: { title: "WebDAV" },
+  settings: { title: "设置" },
 };
 
 function setView(name) {
@@ -152,7 +157,6 @@ function setView(name) {
   document.querySelectorAll(".view").forEach((node) => node.classList.add("hidden"));
   document.getElementById("view-" + view).classList.remove("hidden");
   document.getElementById("pageTitle").textContent = VIEWS[view].title;
-  document.getElementById("pageEyebrow").textContent = VIEWS[view].eyebrow;
   document.querySelectorAll(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.nav === view));
   closeSidebar();
   if (view === "files") {
@@ -180,7 +184,10 @@ window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "o
 document.querySelector(".nav").addEventListener("click", (event) => {
   const item = event.target.closest("[data-nav]");
   if (!item) return;
-  location.hash = item.dataset.nav;
+  // Close the mobile drawer even when the hash does not change — re-tapping
+  // the active nav item fires no hashchange, and the drawer must not stick.
+  closeSidebar();
+  if (location.hash.slice(1) !== item.dataset.nav) location.hash = item.dataset.nav;
 });
 
 document.addEventListener("click", (event) => {
@@ -230,7 +237,16 @@ async function loadOverview() {
     document.getElementById("statBytes").textContent = fmtSize(stats.bytes) + (stats.truncated ? "+" : "");
     document.getElementById("statFiles").textContent = stats.files + (stats.truncated ? "+" : "");
     document.getElementById("statFolders").textContent = stats.folders + (stats.truncated ? "+" : "");
-    document.getElementById("statsNote").textContent = stats.truncated ? "统计扫描了前 5000 个对象" : "已统计整个存储桶";
+    // Free-tier capacity band. R2 exposes no quota API on this plan, so the
+    // bar is informational and clamps at 100% past 10 GB.
+    document.getElementById("statsScope").textContent = stats.truncated ? "部分统计（前 5000 个对象）" : "已统计整个存储桶";
+    document.getElementById("statsScope").className = "badge" + (stats.truncated ? " warn" : "");
+    const fill = document.getElementById("storageFill");
+    if (fill) fill.style.width = Math.min(100, (stats.bytes / (10 * 1024 ** 3)) * 100).toFixed(2) + "%";
+    const notes = [];
+    if (stats.truncated) notes.push("对象较多，仅统计了前 5000 个");
+    if (stats.bytes >= 10 * 1024 ** 3) notes.push("已超出 10 GB 展示额度，进度条按 100% 封顶");
+    document.getElementById("statsNote").textContent = notes.join("；");
   } else {
     document.getElementById("statsNote").textContent = "存储统计暂时不可用";
   }
@@ -269,7 +285,11 @@ document.getElementById("copyConfigBtn").addEventListener("click", () => {
 });
 
 document.getElementById("refreshBtn").addEventListener("click", () => {
-  if (location.hash.slice(1) === "files" || isActive()) void refreshIfCurrent();
+  // Refresh means the current view: files list when files is open, otherwise
+  // the view's own data (overview stats / WebDAV config) — never a no-op.
+  const view = location.hash.slice(1) || "overview";
+  if (view === "files" || isActive()) void refreshIfCurrent();
+  else if (view === "webdav") void loadWebdav();
   else void loadOverview();
 });
 

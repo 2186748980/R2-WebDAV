@@ -199,7 +199,10 @@ async function waitIfPaused(record) {
   while (record.paused && !record.cancelled) {
     record.status = "paused";
     renderActions(record);
-    setTrayStatus(record, "已暂停", undefined);
+    // Honest hint: pause holds between parts in this page only — progress
+    // does not survive a reload, so say so instead of implying a resume
+    // queue that does not exist.
+    setTrayStatus(record, "已暂停 · 刷新页面后需重新上传", undefined);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (record.cancelled) throw Object.assign(new ApiError("已取消", 0), { cancelled: true });

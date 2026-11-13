@@ -21,6 +21,12 @@ export function fmtDate(value) {
   return new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+// Compact date for tight spots like grid cards: "11/08".
+export function fmtShortDate(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+}
+
 export function debounce(fn, wait) {
   let timer;
   return (...args) => {
@@ -40,16 +46,27 @@ export async function copyText(value) {
 
 const TOAST_ICONS = { info: "info", ok: "check", error: "alert" };
 
-export function toast(message, kind = "info") {
+export function toast(message, kind = "info", options = {}) {
   const container = document.getElementById("toasts");
   const item = el("div", "toast " + kind);
   item.innerHTML = `<span class="toast-icon">${TOAST_ICONS[kind] ? icon(TOAST_ICONS[kind], 16) : ""}</span>`;
   item.append(el("span", null, message));
   container.append(item);
-  requestAnimationFrame(() => item.classList.add("show"));
-  setTimeout(() => {
+  const dismiss = () => {
+    clearTimeout(timer);
     item.classList.remove("show");
     setTimeout(() => item.remove(), 220);
-  }, 2600);
+  };
+  const timer = setTimeout(dismiss, 2600);
+  // Action buttons only render for a real callback — no decorative buttons.
+  if (options.action && options.action.label && typeof options.action.onClick === "function") {
+    const actionButton = el("button", "toast-action", options.action.label);
+    actionButton.addEventListener("click", () => {
+      options.action.onClick();
+      dismiss();
+    });
+    item.append(actionButton);
+  }
+  requestAnimationFrame(() => item.classList.add("show"));
   while (container.children.length > 4) container.firstElementChild.remove();
 }

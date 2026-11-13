@@ -1,10 +1,11 @@
 // Files view: listing, breadcrumb, sorting/filter/search, selection and
 // batch bar, the row action menu, and the preview / details / share dialogs.
 
-import { api, ApiError } from "./api.js";
+import { api, ApiError, friendlyMessage } from "./api.js";
 import { icon, iconForItem } from "./icons.js";
-import { el, fmtSize, fmtDate, toast, copyText } from "./ui.js";
-import { formDialog, confirmDialog, showModal, closeModal } from "./dialogs.js";
+import { el, fmtSize, fmtDate, fmtShortDate, toast, copyText } from "./ui.js";
+import { formDialog, confirmDialog, showDrawer } from "./dialogs.js";
+import { downloadFile, previewItem, showDetails, shareItem, isImageType } from "./item-actions.js";
 import { openUploadPicker } from "./uploads.js";
 
 const state = {
@@ -17,6 +18,7 @@ const state = {
   view: localStorage.getItem("r2dav.view") || "list",
   global: false,
   loading: false,
+  searching: false,
   error: null,
   selected: new Set(),
   active: false,
@@ -91,6 +93,19 @@ export function initFiles() {
   document.addEventListener("click", hideMenu);
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") hideMenu(); });
   nodes.list.addEventListener("scroll", hideMenu);
+
+  // Ctrl/Cmd+A selects everything currently visible — but never steal the
+  // shortcut while the user is typing in a field or a dialog is open.
+  document.addEventListener("keydown", (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key !== "a") return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (!state.active || document.getElementById("modal")?.querySelector(".modal-box")) return;
+    if (!visibleItems().length) return;
+    event.preventDefault();
+    visibleItems().forEach((item) => state.selected.add(item.path));
+    render();
+  });
 }
 
 export function currentPath() {
@@ -118,6 +133,7 @@ export async function refreshIfCurrent() {
 
 async function openPath(path, { reset = true } = {}) {
   state.global = false;
+  state.searching = false;
   state.filter = "";
   nodes.hint.classList.add("hidden");
   document.getElementById("searchInput").value = "";
@@ -170,20 +186,26 @@ function render() {
     button.classList.toggle("active", button.dataset.mode === state.view);
   });
   renderBreadcrumb();
-  document.getElementById("itemSummary").textContent = state.loading
+  // The state container only ever shows one message: hide it on every pass
+  // and let renderMessage bring it back, so stale empty/error states never
+  // linger next to a populated list.
+  nodes.state.classList.add("hidden");
+  const shown = visibleItems();
+  document.getElementById("itemSummary").textContent = state.loading || state.searching
     ? ""
-    : `已加载 ${state.items.length} 项${state.cursor ? "（还有更多）" : ""}${state.global ? " · 全局搜索" : ""}`;
+    : state.filter && !state.global
+      ? `匹配 ${shown.length} / 已加载 ${state.items.length} 项${state.cursor ? "（还有更多）" : ""}`
+      : `已加载 ${state.items.length} 项${state.cursor ? "（还有更多）" : ""}${state.global ? " · 全局搜索" : ""}`;
   nodes.list.className = "file-list " + state.view;
   nodes.list.innerHTML = "";
   renderHead();
 
-  const shown = visibleItems();
   const allVisibleSelected = shown.length > 0 && shown.every((item) => state.selected.has(item.path));
   const selectAll = document.getElementById("selectAll");
   selectAll.checked = allVisibleSelected;
   selectAll.indeterminate = shown.some((item) => state.selected.has(item.path)) && !allVisibleSelected;
 
-  if (state.loading) {
+  if (state.loading || state.searching) {
     renderSkeleton();
   } else if (state.error) {
     renderMessage("alert", "目录加载失败：" + state.error, [
@@ -193,11 +215,11 @@ function render() {
     if (state.global) {
       renderMessage("search", "没有匹配 “" + state.filter + "” 的结果", [
         { label: "清除搜索", onClick: clearSearch },
-      ]);
+      ], "搜索范围是当前目录及其子目录，可尝试更短的关键词");
     } else if (state.filter) {
       renderMessage("search", "当前目录没有匹配项", [
         { label: "清除筛选", onClick: clearSearch },
-      ]);
+      ], "检查筛选词是否有拼写差异，或清除筛选查看全部");
     } else {
       renderMessage("folder-plus", "此文件夹为空", [
         { label: "上传文件", kind: "primary", onClick: openUploadPicker },
@@ -230,11 +252,12 @@ function renderSkeleton() {
   }
 }
 
-function renderMessage(glyph, text, actions = []) {
+function renderMessage(glyph, text, actions = [], hint = "") {
   const box = el("div", "list-message");
   const glyphNode = el("div", "message-icon");
   glyphNode.innerHTML = icon(glyph, 34);
   box.append(glyphNode, el("p", null, text));
+  if (hint) box.append(el("p", "message-hint", hint));
   if (actions.length) {
     const row = el("div", "message-actions");
     for (const action of actions) {
@@ -302,9 +325,12 @@ function buildGridCard(item) {
   const glyph = el("div", "grid-icon" + (item.type === "directory" ? " dir" : ""));
   glyph.innerHTML = icon(iconForItem(item), 34);
   const name = el("div", "grid-name", item.name);
-  name.title = item.path;
+  name.title = item.path + (item.uploaded ? " · 修改于 " + fmtDate(item.uploaded) : "");
   const meta = el("div", "grid-meta", item.type === "directory" ? "文件夹" : fmtSize(item.size));
   card.append(glyph, name, meta);
+  if (item.type === "file") {
+    card.append(el("div", "grid-date", fmtShortDate(item.uploaded)));
+  }
 
   // Touch devices (iOS included) never fire contextmenu, so the card carries
   // an explicit menu button; on desktop it appears on hover like the row kebab.
@@ -328,7 +354,14 @@ function buildGridCard(item) {
 
 function openEntry(item) {
   if (item.type === "directory") void openPath(item.path);
-  else void previewItem(item);
+  else void previewItem(item, imageSiblings(item));
+}
+
+// Sibling images in the current listing, for lightbox prev/next navigation.
+function imageSiblings(item) {
+  if (item.type !== "file" || !isImageType(item.name)) return null;
+  const images = visibleItems().filter((node) => node.type === "file" && isImageType(node.name));
+  return images.length > 1 ? images : null;
 }
 
 function renderBreadcrumb() {
@@ -370,14 +403,20 @@ function clearSearch() {
 
 async function runGlobalSearch(query) {
   if (!query) { clearSearch(); return; }
+  state.searching = true;
+  state.error = null;
+  render();
+  nodes.hint.classList.remove("hidden");
+  nodes.hint.innerHTML = "";
+  nodes.hint.append(el("span", null, `正在全局搜索 “${query}”…`));
   try {
     const data = await api.search(state.path, query);
+    state.searching = false;
     state.global = true;
     state.filter = query;
     state.items = data.items;
     state.cursor = null;
     state.selected.clear();
-    nodes.hint.classList.remove("hidden");
     nodes.hint.innerHTML = "";
     const text = el("span", null, `全局搜索 “${query}” · ${data.items.length} 个结果` + (data.truncated ? "（已截断）" : ""));
     const clear = el("button", "btn ghost sm", "清除");
@@ -385,7 +424,14 @@ async function runGlobalSearch(query) {
     nodes.hint.append(text, clear);
     render();
   } catch (error) {
-    if (!error.isAuth) toast("搜索失败：" + error.message, "error");
+    state.searching = false;
+    nodes.hint.classList.add("hidden");
+    if (!error.isAuth) {
+      toast("搜索失败：" + friendlyMessage(error.message), "error", {
+        action: { label: "重试", onClick: () => void runGlobalSearch(query) },
+      });
+    }
+    render();
   }
 }
 
@@ -474,14 +520,18 @@ function setBatchBarBusy(busy) {
 async function batchDelete() {
   if (!state.selected.size) return;
   const count = state.selected.size;
+  const paths = [...state.selected];
+  // Delete confirmation carries the actual targets: folder names expand to
+  // everything inside them, so the dialog states the real blast radius.
+  const preview = paths.slice(0, 3).map((p) => "“" + p.split("/").pop() + "”").join("、");
   const confirmed = await confirmDialog({
     title: "删除 " + count + " 项",
     message: count + " 个文件/文件夹（含内部内容）将被立即删除，此操作不可恢复。",
+    detail: "将删除：" + preview + (count > 3 ? " 等 " + count + " 项" : ""),
     confirmLabel: "全部删除",
     confirmAsync: async (report) => {
       setBatchBarBusy(true);
       try {
-        const paths = [...state.selected];
         let failed = 0;
         let index = 0;
         for (const path of paths) {
@@ -559,8 +609,8 @@ function showMenu(anchor, item) {
   if (item.type === "directory") {
     add("folder", "打开", () => void openPath(item.path));
   } else {
-    add("eye", "预览", () => void previewItem(item));
-    add("download", "下载", () => { location.href = api.downloadUrl(item.path); });
+    add("eye", "预览", () => void previewItem(item, imageSiblings(item)));
+    add("download", "下载", () => void downloadFile(item));
   }
   add("info", "详情", () => void showDetails(item));
   if (item.type === "file") add("link", "生成分享链接", () => void shareItem(item));
@@ -593,185 +643,3 @@ function hideMenu(event) {
   menu.classList.remove("dropdown", "sheet");
 }
 
-// ---- Preview / details / share -------------------------------------------------
-
-function isTextType(name) {
-  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
-  return ["txt", "md", "json", "xml", "csv", "yaml", "yml", "log", "js", "mjs", "css", "html", "htm", "toml", "ini", "conf", "sh", "py"].includes(ext);
-}
-
-async function previewItem(item) {
-  const url = api.fileUrl(item.path);
-  const extension = item.name.slice(item.name.lastIndexOf(".") + 1).toLowerCase();
-  const image = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "avif"].includes(extension);
-  const video = ["mp4", "webm", "mov", "m4v"].includes(extension);
-  const audio = ["mp3", "wav", "ogg", "m4a", "flac"].includes(extension);
-
-  const modal = showModal({
-    title: item.name,
-    wide: true,
-    actions: [{ label: "下载", kind: "primary", onClick: () => { location.href = api.downloadUrl(item.path); } }],
-  });
-  const body = modal.root.querySelector(".modal-body");
-  body.innerHTML = "";
-  const loading = el("div", "preview-loading");
-  loading.innerHTML = '<span class="spinner"></span>';
-  body.append(loading);
-
-  // iPads report as Macintosh with touch; iPhones/iPads cannot render PDF
-  // inside an iframe, so offer a download instead of a blank viewer.
-  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-
-  try {
-    if (image) {
-      body.innerHTML = "";
-      const imageNode = el("img", "preview-media");
-      imageNode.alt = item.name;
-      imageNode.onerror = () => {
-        body.innerHTML = "";
-        // The dialog footer already carries the download action; keep the
-        // body to a single friendly explanation.
-        body.append(el("p", "confirm-message", "图片加载失败：文件可能已被删除、改名或损坏，可尝试下载后查看。"));
-      };
-      imageNode.src = url;
-      body.append(imageNode);
-    } else if (video) {
-      body.innerHTML = "";
-      const videoNode = el("video", "preview-media");
-      videoNode.src = url;
-      videoNode.controls = true;
-      videoNode.preload = "metadata";
-      body.append(videoNode);
-    } else if (audio) {
-      body.innerHTML = "";
-      const audioNode = el("audio", "preview-audio");
-      audioNode.src = url;
-      audioNode.controls = true;
-      body.append(audioNode);
-    } else if (extension === "pdf") {
-      if (isIOS) {
-        body.innerHTML = "";
-        body.append(el("p", "confirm-message", "iOS 浏览器不支持在页面内预览 PDF，请点击下方“下载”后查看。"));
-      } else {
-        body.innerHTML = "";
-        const frame = el("iframe", "preview-frame");
-        frame.src = url;
-        frame.title = item.name;
-        body.append(frame);
-      }
-    } else if (isTextType(item.name)) {
-      if (item.size > 2 * 1024 * 1024) {
-        body.innerHTML = "";
-        body.append(el("p", "confirm-message", "文本文件超过 2 MiB，建议直接下载查看。"));
-      } else {
-        const response = await fetch(url, { credentials: "same-origin" });
-        if (!response.ok) throw new ApiError("HTTP " + response.status, response.status);
-        const text = await response.text();
-        body.innerHTML = "";
-        const pre = el("pre", "preview-text");
-        pre.textContent = text.length ? text : "（空文件）";
-        body.append(pre);
-      }
-    } else {
-      body.innerHTML = "";
-      body.append(el("p", "confirm-message", "该类型暂不支持在线预览，可下载后查看。"));
-    }
-  } catch (error) {
-    body.innerHTML = "";
-    body.append(el("p", "confirm-message", "预览加载失败：" + error.message));
-  }
-  void loading;
-}
-
-async function showDetails(item) {
-  showModal({
-    title: "详情",
-    build: (container) => {
-      const rows = [
-        ["名称", item.name],
-        ["类型", item.type === "directory" ? "文件夹" : "文件"],
-        ["位置", "/" + (item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "")],
-        ["大小", item.type === "directory" ? "—" : fmtSize(item.size)],
-        ["修改时间", fmtDate(item.uploaded)],
-      ];
-      for (const [key, value] of rows) {
-        const row = el("div", "kv");
-        row.append(el("span", null, key));
-        const code = el("code", null, String(value));
-        code.title = String(value);
-        row.append(code);
-        container.append(row);
-      }
-      // Raw object metadata only matters when debugging; keep it collapsed.
-      const advanced = el("details", "adv-details");
-      advanced.append(el("summary", null, "高级信息"));
-      const contentType = el("div", "kv");
-      contentType.append(el("span", null, "Content-Type"));
-      contentType.append(el("code", null, item.contentType || "未知"));
-      const etag = el("div", "kv");
-      etag.append(el("span", null, "ETag"));
-      etag.append(el("code", null, item.etag || "—"));
-      advanced.append(contentType, etag);
-      container.append(advanced);
-    },
-    actions: item.type === "file"
-      ? [{ label: "下载", kind: "primary", onClick: () => { location.href = api.downloadUrl(item.path); } }]
-      : [],
-  });
-}
-
-async function shareItem(item) {
-  let expiryChoice = "86400";
-  const modal = showModal({
-    title: "生成分享链接",
-    build: (container) => {
-      const field = el("label", "field");
-      field.append(el("span", null, "有效期"));
-      const select = el("select", "input");
-      [["3600", "1 小时"], ["86400", "24 小时"], ["604800", "7 天"]].forEach(([value, label]) => {
-        const option = el("option", null, label);
-        option.value = value;
-        if (value === expiryChoice) option.selected = true;
-        select.append(option);
-      });
-      select.addEventListener("change", () => { expiryChoice = select.value; });
-      field.append(select);
-      const result = el("div", "share-result hidden");
-      const link = el("input", "input");
-      link.readOnly = true;
-      const copy = el("button", "btn ghost sm", "复制");
-      copy.addEventListener("click", () => void copyText(link.value));
-      result.append(link, copy);
-      container.append(field, result);
-      container.dataset.result = "1";
-    },
-    actions: [
-      { label: "取消", onClick: () => closeModal() },
-      {
-        label: "生成链接",
-        kind: "primary",
-        onClick: async (close, box) => {
-          const generateButton = box.querySelector(".modal-foot .btn.primary");
-          generateButton.disabled = true;
-          generateButton.classList.add("busy");
-          try {
-            const data = await api.share(item.path, Number(expiryChoice));
-            const link = box.querySelector(".share-result input");
-            const resultBox = box.querySelector(".share-result");
-            link.value = data.url;
-            resultBox.classList.remove("hidden");
-            box.querySelector(".modal-foot").remove();
-            const note = el("p", "field-hint", "过期时间：" + fmtDate(data.expiresAt) + "。任何拿到链接的人都可以在此时间前访问该文件。");
-            box.querySelector(".modal-body").append(note);
-            await copyText(data.url);
-          } catch (error) {
-            generateButton.disabled = false;
-            generateButton.classList.remove("busy");
-            if (!error.isAuth) toast("生成失败：" + error.message, "error");
-          }
-        },
-      },
-    ],
-  });
-  void modal;
-}
