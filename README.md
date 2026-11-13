@@ -179,6 +179,8 @@ Cloudflare 的免费额度和限制会变化，实际费用取决于使用量。
 
 R2 负责保存文件，Worker 负责网页、WebDAV、认证和文件操作。
 
+> 二次开发前请先读 [docs/design-spec.md](docs/design-spec.md)（设计规范：token、组件形态、动效规则）与 [docs/development-rules.md](docs/development-rules.md)（开发规则：架构、安全红线、测试部署）。
+
 ## 自动部署
 
 连接 Cloudflare Workers Builds 后：
