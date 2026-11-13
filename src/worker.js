@@ -202,7 +202,7 @@ async function handlePanelApi(request, env) {
         type: "file",
         size: object.size,
         uploaded: object.uploaded,
-        contentType: object.httpMetadata?.contentType || "application/octet-stream",
+        contentType: object.httpMetadata?.contentType || null,
         etag: object.httpEtag || quoteETag(object.etag),
       });
     }
@@ -228,7 +228,11 @@ async function handlePanelApi(request, env) {
     });
   }
 
-  if (pathname === "/panel/api/file" && request.method === "GET") {
+  // GET serves the bytes; HEAD serves the same headers with no body (used by
+  // clients probing size/type before downloading). handleGet already knows
+  // how to answer HEAD-only requests.
+  if ((pathname === "/panel/api/file" || pathname === "/panel/api/download") && (request.method === "GET" || request.method === "HEAD")) {
+    const headOnly = request.method === "HEAD";
     let key;
     try {
       key = panelPathToKey(url.searchParams.get("path") || "");
@@ -239,23 +243,15 @@ async function handlePanelApi(request, env) {
     const resource = await findResource(env.R2_BUCKET, key);
     if (!resource) return textResponse("Not found.", 404);
     if (resource.kind === "directory") return textResponse("A collection cannot be downloaded.", 400);
-    return handleGet(request, env.R2_BUCKET, key, false);
-  }
-
-  if (pathname === "/panel/api/download" && request.method === "GET") {
-    let key;
-    try {
-      key = panelPathToKey(url.searchParams.get("path") || "");
-    } catch {
-      return textResponse("Invalid path.", 400);
+    if (pathname === "/panel/api/download") {
+      const response = await handleGet(request, env.R2_BUCKET, key, headOnly);
+      const headers = new Headers(response.headers);
+      headers.set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(displayNameFor(key))}`);
+      // response.body is already null for a HEAD request, so this preserves
+      // the GET stream unchanged.
+      return new Response(response.body, { status: response.status, headers });
     }
-    if (!key) return textResponse("Invalid path.", 400);
-    const resource = await findResource(env.R2_BUCKET, key);
-    if (!resource || resource.kind !== "file") return textResponse("Not found.", 404);
-    const response = await handleGet(request, env.R2_BUCKET, key, false);
-    const headers = new Headers(response.headers);
-    headers.set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(displayNameFor(key))}`);
-    return new Response(response.body, { status: response.status, headers });
+    return handleGet(request, env.R2_BUCKET, key, headOnly);
   }
 
   if (pathname === "/panel/api/upload" && request.method === "PUT") {
@@ -271,7 +267,7 @@ async function handlePanelApi(request, env) {
     const existing = await findResource(env.R2_BUCKET, key);
     if (existing?.kind === "directory") return textResponse("A collection already exists at this path.", 409);
     await env.R2_BUCKET.put(key, request.body, {
-      httpMetadata: { contentType: request.headers.get("Content-Type") || "application/octet-stream" },
+      httpMetadata: { contentType: resolveContentType(request.headers.get("Content-Type"), key) },
     });
     return jsonResponse({ ok: true, path: key, overwritten: Boolean(existing) }, existing ? 200 : 201);
   }
@@ -287,7 +283,7 @@ async function handlePanelApi(request, env) {
       const existing = await findResource(env.R2_BUCKET, key);
       if (existing?.kind === "directory") return jsonResponse({ error: "A collection already exists at this path." }, 409);
       const upload = await env.R2_BUCKET.createMultipartUpload(key, {
-        httpMetadata: { contentType: payload.contentType || "application/octet-stream" },
+        httpMetadata: { contentType: resolveContentType(payload.contentType, key) },
       });
       return jsonResponse({ key: upload.key, uploadId: upload.uploadId, overwritten: Boolean(existing) }, existing ? 200 : 201);
     } catch (error) {
@@ -433,7 +429,7 @@ async function searchObjects(bucket, prefix, query, maxResults) {
       scanned += 1;
       if (object.key.endsWith("/")) continue;
       if (object.key.toLowerCase().includes(query)) {
-        items.push({ name: displayNameFor(object.key), path: object.key, type: "file", size: object.size, uploaded: object.uploaded, contentType: object.httpMetadata?.contentType || "application/octet-stream" });
+        items.push({ name: displayNameFor(object.key), path: object.key, type: "file", size: object.size, uploaded: object.uploaded, contentType: object.httpMetadata?.contentType || null });
         if (items.length >= maxResults) { truncated = true; break; }
       }
     }
@@ -512,6 +508,38 @@ function panelPathToKey(value) {
     throw new Error("unsafe panel path");
   }
   return segments.join("/");
+}
+
+// Fallback Content-Type inferred from the file extension. Some WebDAV
+// clients PUT without a Content-Type header, and the panel sends the
+// octet-stream default when the browser gives it no MIME type (e.g. exotic
+// extensions); both end up as unplayable/unpreviewable objects in R2. Only
+// fires when the request carries no useful type — an explicit, specific
+// Content-Type always wins.
+const MIME_BY_EXT = new Map([
+  ["mp4", "video/mp4"], ["m4v", "video/x-m4v"], ["webm", "video/webm"], ["mov", "video/quicktime"], ["mkv", "video/x-matroska"],
+  ["mp3", "audio/mpeg"], ["m4a", "audio/mp4"], ["wav", "audio/wav"], ["ogg", "audio/ogg"], ["flac", "audio/flac"],
+  ["jpg", "image/jpeg"], ["jpeg", "image/jpeg"], ["png", "image/png"], ["gif", "image/gif"], ["webp", "image/webp"], ["avif", "image/avif"], ["bmp", "image/bmp"], ["svg", "image/svg+xml"], ["ico", "image/x-icon"],
+  ["pdf", "application/pdf"],
+  ["txt", "text/plain"], ["md", "text/markdown"], ["csv", "text/csv"], ["log", "text/plain"],
+  ["json", "application/json"], ["xml", "application/xml"], ["html", "text/html"], ["htm", "text/html"], ["css", "text/css"], ["js", "text/javascript"],
+  ["zip", "application/zip"], ["rar", "application/vnd.rar"], ["7z", "application/x-7z-compressed"],
+  ["doc", "application/msword"], ["docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  ["xls", "application/vnd.ms-excel"], ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  ["ppt", "application/vnd.ms-powerpoint"], ["pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+]);
+
+function guessContentType(key) {
+  const dot = key.lastIndexOf(".");
+  if (dot < 0 || dot === key.length - 1) return null;
+  return MIME_BY_EXT.get(key.slice(dot + 1).toLowerCase()) || null;
+}
+
+// Resolve the stored Content-Type for an upload: prefer a specific
+// request-provided type, then the extension guess, then octet-stream.
+function resolveContentType(provided, key) {
+  if (provided && provided !== "application/octet-stream") return provided;
+  return guessContentType(key) || provided || "application/octet-stream";
 }
 
 function jsonResponse(value, status = 200, extraHeaders = {}) {
@@ -781,6 +809,13 @@ function objectHeaders(object, etag) {
   headers.set("Content-Length", String(object.size));
   headers.set("ETag", etag);
   headers.set("Last-Modified", new Date(object.uploaded).toUTCString());
+  // Defence in depth for inline rendering: when an object is opened directly
+  // as a document (share link or panel URL in a browser tab), scripts inside
+  // SVG/HTML cannot execute. Embedded previews (img/video/iframe inside the
+  // panel) are unaffected — CSP only binds the response's own document
+  // context, and the panel page itself carries no CSP. nosniff is already
+  // applied globally by finalize().
+  headers.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'");
   return headers;
 }
 
@@ -841,7 +876,7 @@ async function handlePut(request, bucket, key) {
     return textResponse("Destination already exists.", 412);
   }
 
-  const contentType = request.headers.get("Content-Type") || "application/octet-stream";
+  const contentType = resolveContentType(request.headers.get("Content-Type"), key);
   await bucket.put(key, request.body, { httpMetadata: { contentType } });
   return new Response(null, { status: existing ? 204 : 201, headers: DAV_HEADERS });
 }

@@ -374,6 +374,25 @@ async function run() {
   ok((response.headers.get("Content-Disposition") || "").includes("attachment"), "panel download forces attachment");
   ok((response.headers.get("Content-Disposition") || "").includes("filename*"), "panel download RFC 5987 filename");
 
+  // HEAD probes: same headers as GET, no body (clients check size/type first).
+  response = await dav("HEAD", "/panel/api/file?path=panel-test/hello.txt");
+  await expectStatus(response, 200, "panel file HEAD");
+  ok((response.headers.get("Content-Length") || "") === String(new TextEncoder().encode("hello panel v2").length), "panel file HEAD content-length");
+  ok((await response.text()) === "", "panel file HEAD has no body");
+  response = await dav("HEAD", "/panel/api/download?path=panel-test/hello.txt");
+  await expectStatus(response, 200, "panel download HEAD");
+  ok((response.headers.get("Content-Disposition") || "").includes("attachment"), "panel download HEAD disposition");
+  ok((await response.text()) === "", "panel download HEAD has no body");
+  response = await dav("HEAD", "/panel/api/file?path=panel-test/missing.txt");
+  await expectStatus(response, 404, "panel file HEAD missing object");
+
+  // Inline-rendering CSP: scripts and form navigation are both blocked when
+  // an object is opened as a document in a browser tab.
+  response = await dav("GET", "/panel/api/file?path=panel-test/hello.txt");
+  const csp = response.headers.get("Content-Security-Policy") || "";
+  ok(csp.includes("default-src 'none'"), "object CSP blocks scripts");
+  ok(csp.includes("form-action 'none'"), "object CSP blocks form submission");
+
   response = await dav("GET", "/panel/api/list?path=");
   await expectStatus(response, 200, "panel root listing");
   const rootListing = await response.json();
