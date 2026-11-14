@@ -57,7 +57,7 @@ export function toast(message, kind = "info", options = {}) {
     item.classList.remove("show");
     setTimeout(() => item.remove(), 220);
   };
-  const timer = setTimeout(dismiss, 2600);
+  const timer = setTimeout(dismiss, options.duration || 2600);
   // Action buttons only render for a real callback — no decorative buttons.
   if (options.action && options.action.label && typeof options.action.onClick === "function") {
     const actionButton = el("button", "toast-action", options.action.label);

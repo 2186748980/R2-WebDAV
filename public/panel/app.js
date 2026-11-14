@@ -96,21 +96,57 @@ revealButton.addEventListener("click", () => {
   revealButton.innerHTML = icon(reveal ? "eye-off" : "eye", 18);
 });
 
+// Per-field inline validation slots (P1-5): mark the exact empty field
+// instead of one generic message; .input.invalid adds the shake + red border.
+function loginFieldError(input, message) {
+  const slot = input.closest(".field")?.querySelector(".field-error");
+  if (!slot) return;
+  if (message) {
+    slot.textContent = message;
+    slot.classList.remove("hidden");
+    input.classList.add("invalid");
+  } else {
+    slot.classList.add("hidden");
+    input.classList.remove("invalid");
+  }
+}
+
+// enterkeyhint="next" only changes the key label — the jump is ours to do.
+document.getElementById("loginUser").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    loginPassInput.focus();
+  }
+});
+
+// Soft keyboards park the submit button off-screen on small phones; pull it
+// back into view whenever a login field gains focus (P0-5).
+document.getElementById("loginForm").addEventListener("focusin", () => {
+  document.getElementById("loginSubmit").scrollIntoView({ block: "nearest" });
+});
+
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   // No `booting` guard here: that flag only marks one-time module init and
   // stays true after logout, which would silently swallow every subsequent
   // login submit. Double-submit is already covered by disabling the button.
-  const username = document.getElementById("loginUser").value.trim();
+  const userInput = document.getElementById("loginUser");
+  const username = userInput.value.trim();
   const password = loginPassInput.value;
   const error = document.getElementById("loginError");
   const submit = document.getElementById("loginSubmit");
-  if (!username || !password) {
+  loginFieldError(userInput, null);
+  loginFieldError(loginPassInput, null);
+  if (!username && !password) {
     error.textContent = "请输入用户名和密码";
     error.classList.remove("hidden");
     return;
   }
+  if (!username) { loginFieldError(userInput, "请输入用户名"); return; }
+  if (!password) { loginFieldError(loginPassInput, "请输入密码"); return; }
+  error.classList.add("hidden");
   submit.disabled = true;
+  submit.classList.add("busy");
   submit.textContent = "登录中…";
   try {
     await api.login(username, password);
@@ -128,6 +164,7 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
     error.classList.remove("hidden");
   } finally {
     submit.disabled = false;
+    submit.classList.remove("busy");
     submit.textContent = "登 录";
   }
 });

@@ -394,8 +394,15 @@ function syncBatchBar() {
 }
 
 function clearSearch() {
+  // A global search REPLACES state.items with its results, so clearing it
+  // must reload the real directory — re-rendering would present stale search
+  // results (or an empty set) as the listing ("已加载 0 项" on a full folder).
+  // A plain per-directory filter only narrows the loaded items: re-render.
+  if (state.global) {
+    void openPath(state.path);
+    return;
+  }
   state.filter = "";
-  state.global = false;
   document.getElementById("searchInput").value = "";
   nodes.hint.classList.add("hidden");
   render();
@@ -496,12 +503,22 @@ async function transferItem(item, action) {
   toast(action === "copy" ? "已复制" : "已移动", "ok");
 }
 
+// Single files up to this size keep a local copy for the undo window; larger
+// files and directories cannot be restored client-side, so they keep the
+// explicit confirmation dialog instead of undo.
+const UNDO_CACHE_LIMIT = 25 * 1024 * 1024;
+const UNDO_WINDOW_MS = 5000;
+
 async function deleteItem(item) {
+  if (item.type === "file" && (item.size || 0) <= UNDO_CACHE_LIMIT) {
+    await deleteFileWithUndo(item);
+    return;
+  }
   const confirmed = await confirmDialog({
     title: "删除 " + item.name,
     message: item.type === "directory"
       ? "文件夹 “" + item.name + "” 及其内部全部内容将被立即删除，此操作不可恢复。"
-      : "文件 “" + item.name + "” 将被立即删除，此操作不可恢复。",
+      : "文件 “" + item.name + "” 较大，删除后无法在页面内撤销，此操作不可恢复。",
     confirmLabel: "删除",
     confirmAsync: async () => {
       await api.action({ action: "delete", source: item.path });
@@ -511,6 +528,53 @@ async function deleteItem(item) {
   });
   if (!confirmed) return;
   toast("已删除", "ok");
+}
+
+// Delete with a 5-second undo toast instead of a second confirmation: the
+// content is cached before the DELETE, and undo PUTs it back byte-for-byte.
+// Restore re-stamps the upload time (R2 stores no original mtime) — the
+// object name, content and content type all come back unchanged.
+async function deleteFileWithUndo(item) {
+  let cached = null;
+  try {
+    const response = await fetch(api.fileUrl(item.path), { credentials: "same-origin" });
+    if (response.ok) {
+      cached = {
+        blob: await response.blob(),
+        type: response.headers.get("Content-Type") || item.contentType || "application/octet-stream",
+      };
+    }
+  } catch { /* cache is best-effort; deletion proceeds without undo */ }
+
+  try {
+    await api.action({ action: "delete", source: item.path });
+  } catch (error) {
+    if (!error.isAuth) toast(`删除失败：${error.message}`, "error");
+    return;
+  }
+  state.selected.delete(item.path);
+  await openPath(state.path);
+
+  const undo = async () => {
+    try {
+      const response = await fetch(api.uploadUrl(item.path), {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": cached.type },
+        body: cached.blob,
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      toast(`已恢复 “${item.name}”`, "ok");
+      await openPath(state.path);
+    } catch {
+      toast("恢复失败：网络错误或同名文件已存在", "error");
+    }
+  };
+  if (cached) {
+    toast(`已删除 “${item.name}”`, "ok", { action: { label: "撤销", onClick: () => void undo() }, duration: UNDO_WINDOW_MS });
+  } else {
+    toast(`已删除 “${item.name}”`, "ok");
+  }
 }
 
 function setBatchBarBusy(busy) {

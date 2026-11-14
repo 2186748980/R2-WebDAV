@@ -14,10 +14,10 @@ let pendingClose = null;
 let drawerOpen = false;
 let drawerReturnFocus = null;
 
-export function showModal({ title, build, actions = [], danger = false, wide = false, dismissOnBackdrop = true, onClose, ready }) {
+export function showModal({ title, build, actions = [], danger = false, wide = false, compact = false, dismissOnBackdrop = true, onClose, ready }) {
   if (pendingClose) { clearTimeout(pendingClose); pendingClose = null; }
   closeModal(true);
-  const box = el("div", "modal-box" + (wide ? " wide" : "") + (danger ? " danger" : ""));
+  const box = el("div", "modal-box" + (wide ? " wide" : "") + (compact ? " compact" : "") + (danger ? " danger" : ""));
   box.setAttribute("role", "dialog");
   box.setAttribute("aria-modal", "true");
   box.setAttribute("aria-label", title);
@@ -347,6 +347,7 @@ export function confirmDialog({ title, message, detail, confirmLabel = "删除",
     showModal({
       title,
       danger,
+      compact: true,
       build: (container) => {
         if (message) container.append(el("p", "confirm-message", message));
         if (detail) container.append(el("p", "field-hint", detail));

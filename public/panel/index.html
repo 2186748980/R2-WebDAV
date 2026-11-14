@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f4f6f8">
 <meta name="description" content="R2-WebDAV 私有云管理面板">
@@ -35,17 +35,22 @@
     <h1>登录管理面板</h1>
     <p class="login-sub">使用 WebDAV 账号密码登录</p>
     <form id="loginForm" novalidate>
-      <label class="field"><span>用户名</span><input class="input" id="loginUser" autocomplete="username" autocapitalize="none" required></label>
+      <label class="field"><span>用户名</span>
+        <input class="input" id="loginUser" autocomplete="username" autocapitalize="none" enterkeyhint="next" required>
+        <span class="field-error hidden" role="alert"></span>
+      </label>
       <label class="field"><span>密码</span>
         <span class="pw-wrap">
-          <input class="input" id="loginPass" type="password" autocomplete="current-password" required>
+          <input class="input" id="loginPass" type="password" autocomplete="current-password" enterkeyhint="go" required>
           <button type="button" class="icon-btn reveal-btn" id="revealPass" aria-label="显示密码" aria-pressed="false"><span data-icon="eye"></span></button>
         </span>
+        <span class="field-error hidden" role="alert"></span>
       </label>
       <p id="loginError" class="form-error hidden" role="alert"></p>
       <button class="btn primary block" type="submit" id="loginSubmit">登 录</button>
     </form>
     <p class="login-foot">会话在本浏览器保留 24 小时，修改密码后立即失效</p>
+    <p class="login-foot">忘记密码？在 Cloudflare Worker Secret 中修改 WEBDAV_PASSWORD，旧会话与分享会同时失效</p>
   </div>
 </section>
 
